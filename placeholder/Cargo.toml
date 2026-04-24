@@ -1,0 +1,12 @@
+[package]
+name = "placeholder"
+description = "Placeholder crate to be deleted once components are added"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+doc = []
