@@ -1,0 +1,22 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
+[toolchain]
+channel = "nightly-2026-02-13" # One day post 1.93.1
+targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
+components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
+
+# A custom section for CI pipelines to install tools
+[tools]
+cargo-deny = "^0.18"
+cargo-geiger = "0.13.0"
+cargo-llvm-cov = "0.6.18"
+cargo-make = "0.37.21"
+cargo-release = "0.25.12"
+cargo-vet = "0.10.0"
+mdbook = "0.4.40"
+mdbook-admonish = "1.18.0"
+mdbook-mermaid = "0.14.0"

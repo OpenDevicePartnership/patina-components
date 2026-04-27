@@ -1,0 +1,251 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
+[config]
+default_to_workspace = false
+
+[env]
+BUILD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings"
+COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+
+[env.development]
+RUSTC_PROFILE = "dev"
+RUSTC_TARGET = "debug"
+
+[env.release]
+RUSTC_PROFILE = "release"
+RUSTC_TARGET = "release"
+
+[tasks.build-x64]
+description = """Builds patina components as UEFI target.
+
+Example:
+    `cargo make build-x64`
+    `cargo make -p release build-x64`
+"""
+clear = true
+command = "cargo"
+args = ["build", "--target", "x86_64-unknown-uefi", "@@split(BUILD_FLAGS, )", "@@split(UEFI_CRATES, )"]
+
+[tasks.build-aarch64]
+description = """Builds patina components as UEFI target.
+
+Example:
+    `cargo make build-aarch64`
+    `cargo make -p release build-aarch64`
+"""
+clear = true
+command = "cargo"
+args = ["build", "--target", "aarch64-unknown-uefi", "@@split(BUILD_FLAGS, )", "@@split(UEFI_CRATES, )"]
+
+[tasks.build]
+description = """Builds patina components. Example `cargo make build` or `cargo make -p release build`
+
+Example:
+    `cargo make build`
+    `cargo make -p release build`
+"""
+clear = true
+run_task = [{ name = ["build-x64", "build-aarch64"], parallel = true }]
+
+[tasks.check_json]
+description = "Checks rust code for errors with results in JSON. Example `cargo make check_json`"
+clear = true
+command = "cargo"
+args = ["check", "--message-format=json"]
+
+[tasks.check_no_std]
+description = "Checks rust code for no_std build errors with results."
+private = true
+command = "cargo"
+args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check_std]
+description = "Checks rust code for std build errors with results."
+private = true
+command = "cargo"
+args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check_tests]
+description = "Checks rust test code for build errors with results."
+private = true
+command = "cargo"
+args = ["test", "--no-run", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check]
+description = "Checks rust code for errors. Example `cargo make check`"
+clear = true
+run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
+
+[tasks.check-no-default-features-code]
+description = "Checks rust code compiles without default features."
+private = true
+command = "cargo"
+args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check-no-default-features-tests]
+description = "Checks rust test code compiles without default features."
+private = true
+command = "cargo"
+args = ["test", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check-no-default-features]
+description = "Checks rust code and tests compile without default features to catch feature-gate regressions."
+clear = true
+run_task = [{ name = ["check-no-default-features-code", "check-no-default-features-tests"], parallel = true }]
+
+[tasks.llvm-cov-clean]
+description = "Clean coverage data"
+private = true
+install_crate = false
+command = "cargo"
+args = ["llvm-cov", "clean", "--workspace"]
+
+[tasks.test]
+description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -- --nocapture`"
+clear = true
+command = "cargo"
+args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+
+[tasks.test-cov]
+description = "Run tests and collect coverage data without generating reports."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doctests"]
+dependencies = ["llvm-cov-clean"]
+
+[tasks.coverage-lcov]
+description = "Generate an LCOV coverage report from collected data."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+
+[tasks.coverage-html]
+description = "Generate an HTML coverage report from collected data."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
+
+[tasks.coverage]
+description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
+dependencies = ["test-cov", "coverage-lcov", "coverage-html"]
+clear = true
+
+[tasks.test-asan]
+description = "Run tests with AddressSanitizer enabled. Example `cargo make test-asan`. Use `cargo make test-asan --print-dll-path` to print the ASan runtime DLL directory."
+clear = true
+script_runner = "@duckscript"
+script = '''
+os = os_family
+
+if eq ${os} "windows"
+    # ASan testing is only supported on Windows x64.
+    # https://learn.microsoft.com/cpp/sanitizers/asan
+    arch = get_env PROCESSOR_ARCHITECTURE
+    if not eq ${arch} "AMD64"
+        echo "test-asan is only supported on Windows x64. Detected arch: ${arch}. Skipping."
+        exit 0
+    end
+
+    # The ASan runtime DLL (clang_rt.asan_dynamic-x86_64.dll) from the
+    # MSVC toolchain must be on PATH for ASan-instrumented test binaries to run.
+    #
+    # Resolve the VC toolset path per vswhere docs:
+    # https://github.com/microsoft/vswhere/wiki/Find-VC
+    program_files_x86 = get_env "ProgramFiles(x86)"
+    vswhere = set "${program_files_x86}/Microsoft Visual Studio/Installer/vswhere.exe"
+    output = exec "${vswhere}" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    install_dir = trim ${output.stdout}
+    version = readfile "${install_dir}/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"
+    version = trim ${version}
+    asan_dll_path = set "${install_dir}/VC/Tools/MSVC/${version}/bin/HostX64/x64"
+
+    args = get_env CARGO_MAKE_TASK_ARGS
+    if contains "${args}" "--print-dll-path"
+        asan_dll_path = replace ${asan_dll_path} / \\
+        echo "${asan_dll_path}"
+        exit 0
+    end
+
+    current_path = get_env PATH
+    set_env PATH "${asan_dll_path};${current_path}"
+elseif eq ${os} "linux"
+    # On Linux, the ASan runtime is resolved automatically by the linker.
+    noop
+else
+    echo "test-asan is not supported on ${os}. Skipping."
+    exit 0
+end
+
+set_env RUSTFLAGS "-Zsanitizer=address"
+set_env RUSTDOCFLAGS "-Zsanitizer=address"
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+exec --fail-on-error cargo test --target ${target} --workspace
+'''
+
+[tasks.clippy]
+description = "Run cargo clippy."
+clear = true
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.doc]
+env = { RUSTDOCFLAGS = "-D warnings"}
+description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
+command = "cargo"
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
+
+[tasks.doc-open]
+env = { RUSTDOCFLAGS = "-D warnings"}
+description = "Builds all rust documentation in the workspace and opens the documentation Example `cargo make doc-open`"
+command = "cargo"
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
+
+[tasks.fmt]
+description = "Run cargo format."
+clear = true
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.fmt-check]
+description = "Check cargo format without modifying files."
+clear = true
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.doc-test]
+description = "Run documentation tests."
+clear = true
+command = "cargo"
+args = ["test", "--doc"]
+
+[tasks.cspell]
+description = "Run cspell for spell checking." # npm install -g cspell@latest
+script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
+
+[tasks.deny]
+description = "Run cargo deny."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["deny", "check"]
+
+[tasks.all]
+description = "Run all tasks for PR readiness."
+dependencies = [
+    "fmt-check",
+    "deny",
+    "clippy",
+    "cspell",
+    "check-no-default-features",
+    "build",
+    "coverage",
+    "doc-test",
+    "doc",
+]

@@ -1,6 +1,6 @@
 # Patina Components
 
-This repository currrently serves as an evaluation area for breaking out Patina components to their own repo. Meaning,
+This repository currently serves as an evaluation area for breaking out Patina components to their own repo. Meaning,
 initially, only new components will be added to this repo with no change to existing components in the `patina`
 repository.
 

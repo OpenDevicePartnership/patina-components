@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["placeholder"]
+
+[workspace.package]
+version = "0.0.1"
+license = "Apache-2.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Patina components"
+repository = "https://github.com/OpenDevicePartnership/patina-components"
+
+[workspace.dependencies]
+patina = { version = "21"}
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
