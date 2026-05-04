@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["uefi_hid"]
+members = ["uefi_hid", "usb_hid"]
 
 [workspace.package]
 version = "0.0.1"
