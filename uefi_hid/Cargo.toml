@@ -1,0 +1,28 @@
+[package]
+name = "uefi_hid"
+description = "UEFI HID (Human Interface Device) support as a Patina component."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["ctrl-alt-del"]
+ctrl-alt-del = []
+
+[dependencies]
+hidparser = { workspace = true }
+log = { workspace = true }
+num_enum = { workspace = true }
+patina = { workspace = true }
+r-efi = { workspace = true }
+scroll = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }

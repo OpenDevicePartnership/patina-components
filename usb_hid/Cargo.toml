@@ -1,0 +1,21 @@
+[package]
+name = "usb_hid"
+description = "USB HID driver that produces the HidIo protocol as a Patina component."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+patina = { workspace = true }
+r-efi = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }
