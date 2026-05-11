@@ -1,0 +1,31 @@
+[package]
+name = "patina_boot"
+version = "0.1.0"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "Boot orchestration components for Patina firmware."
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+# patina/patina_macro are pulled from feature/patina-boot until a patina release
+# containing the required APIs (HardDrive::try_from_node, create_event_ex_unchecked
+# Option<fn>, etc.) is published to crates.io.
+patina = { git = "https://github.com/OpenDevicePartnership/patina", branch = "feature/patina-boot", features = ["unstable-device-path"] }
+patina_macro = { git = "https://github.com/OpenDevicePartnership/patina", branch = "feature/patina-boot" }
+r-efi = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+patina = { git = "https://github.com/OpenDevicePartnership/patina", branch = "feature/patina-boot", features = ["mockall", "unstable-device-path"] }
+mockall = { workspace = true }
+
+[features]
+default = []
+doc = []
+std = []

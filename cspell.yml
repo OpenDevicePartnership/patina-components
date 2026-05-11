@@ -25,9 +25,13 @@ minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true
 words:
+  - "addrs"
+  - "bootx"
   - "Depex"
+  - "deque"
   - "efiapi"
   - "guids"
   - "mdbook"
   - "sysreg"
   - "unsignaled"
+  - "withf"
