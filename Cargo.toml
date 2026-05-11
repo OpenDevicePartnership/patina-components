@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["placeholder"]
+members = ["patina_boot", "placeholder"]
 
 [workspace.package]
 version = "0.0.1"
@@ -11,7 +11,12 @@ description = "Patina components"
 repository = "https://github.com/OpenDevicePartnership/patina-components"
 
 [workspace.dependencies]
-patina = { version = "21"}
+log = { version = "0.4", default-features = false }
+mockall = { version = "0.13" }
+r-efi = { version = "5", default-features = false }
+spin = { version = "0.9", default-features = false, features = ["spin_mutex"] }
+zerocopy = { version = "0.8", default-features = false }
+zerocopy-derive = { version = "0.8" }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
