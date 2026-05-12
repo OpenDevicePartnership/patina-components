@@ -1,0 +1,25 @@
+[package]
+name = "patina_ram_disk"
+version = "0.1.0"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "RAM disk install helper for Patina firmware (wraps EFI_RAM_DISK_PROTOCOL)."
+
+[lints]
+workspace = true
+
+[dependencies]
+# patina is pulled from feature/patina-boot until a patina release containing the RAM Disk
+# Protocol binding (`uefi_protocol::ram_disk::Protocol`) and `unstable-device-path` API is
+# published to crates.io.
+patina = { git = "https://github.com/kat-perez/patina", branch = "kat-perez/sre-base", features = ["unstable-device-path"] }
+r-efi = { version = "5", default-features = false }
+
+[dev-dependencies]
+patina = { git = "https://github.com/kat-perez/patina", branch = "kat-perez/sre-base", features = ["mockall", "unstable-device-path"] }
+
+[features]
+default = []
+doc = []
+std = []
