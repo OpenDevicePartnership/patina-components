@@ -91,7 +91,6 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
-    { allow = ["Unicode-3.0"], crate = "unicode-ident" },
 ]
 
 [licenses.private]
@@ -200,7 +199,5 @@ allow-registry = [
 
 [sources.allow-org]
 # github.com organizations to allow git sources for
-# OpenDevicePartnership is allowed for the temporary [patch.crates-io]
-# redirect of patina/patina_macro to the feature/patina-boot branch.
-# Drop once a patina release containing the new APIs is published.
-github = ["OpenDevicePartnership"]
+# No source is currently used from the microsoft GitHub organization so it is commented
+# github = ["microsoft"]
