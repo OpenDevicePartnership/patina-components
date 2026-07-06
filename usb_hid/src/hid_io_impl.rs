@@ -235,11 +235,12 @@ mod test {
     use alloc::{boxed::Box, vec, vec::Vec};
     use core::cell::Cell;
 
-    use patina::uefi_protocol::usb_io::{EfiAsyncUsbTransferCallback, EfiUsbIoProtocol, types::*};
+    use r_efi::efi::protocols::usb_io;
 
     use crate::{
         device::{ReportCallbackState, UsbHidDescriptors, UsbHidDevice},
         interrupt_transfers::TransferRecoveryTimer,
+        usb_hid_defs::{empty_usb_endpoint_descriptor, empty_usb_interface_descriptor},
     };
 
     struct NoopTransferRecoveryTimer;
@@ -256,7 +257,7 @@ mod test {
     /// mock functions can recover the mock state from the `this` pointer.
     #[repr(C)]
     struct MockUsbIo {
-        protocol: EfiUsbIoProtocol,
+        protocol: usb_io::Protocol,
         control_transfer_status: efi::Status,
         async_transfer_status: efi::Status,
         control_call_count: Cell<usize>,
@@ -265,16 +266,16 @@ mod test {
     impl MockUsbIo {
         /// # Safety
         /// `this` must point to the `protocol` field of a valid `MockUsbIo`.
-        unsafe fn from_this(this: *const EfiUsbIoProtocol) -> &'static Self {
+        unsafe fn from_this(this: *mut usb_io::Protocol) -> &'static Self {
             // SAFETY: MockUsbIo is #[repr(C)] with protocol as first field.
             unsafe { &*(this as *const MockUsbIo) }
         }
     }
 
     extern "efiapi" fn mock_control_transfer(
-        this: *const EfiUsbIoProtocol,
-        _request: *const EfiUsbDeviceRequest,
-        _direction: EfiUsbDataDirection,
+        this: *mut usb_io::Protocol,
+        _request: *mut usb_io::DeviceRequest,
+        _direction: usb_io::DataDirection,
         _timeout: u32,
         _data: *mut c_void,
         _data_length: usize,
@@ -287,12 +288,12 @@ mod test {
     }
 
     extern "efiapi" fn mock_async_interrupt_transfer(
-        this: *const EfiUsbIoProtocol,
+        this: *mut usb_io::Protocol,
         _endpoint: u8,
         _is_new_transfer: efi::Boolean,
         _polling_interval: usize,
         _data_length: usize,
-        _callback: Option<EfiAsyncUsbTransferCallback>,
+        _callback: Option<usb_io::AsyncUsbTransferCallback>,
         _context: *mut c_void,
     ) -> efi::Status {
         // SAFETY: this points to a valid MockUsbIo on the test stack.
@@ -302,8 +303,8 @@ mod test {
 
     fn make_mock_usb_io(control_status: efi::Status, async_status: efi::Status) -> MockUsbIo {
         let mut protocol = crate::test_stubs::usb_io_stub();
-        protocol.usb_control_transfer = mock_control_transfer;
-        protocol.usb_async_interrupt_transfer = mock_async_interrupt_transfer;
+        protocol.control_transfer = mock_control_transfer;
+        protocol.async_interrupt_transfer = mock_async_interrupt_transfer;
         MockUsbIo {
             protocol,
             control_transfer_status: control_status,
@@ -317,14 +318,14 @@ mod test {
     fn make_device(usb_io: &MockUsbIo, report_descriptor: Vec<u8>) -> Box<UsbHidDevice> {
         Box::new(UsbHidDevice {
             hid_io: new_hid_io_protocol(),
-            usb_io: &usb_io.protocol as *const EfiUsbIoProtocol,
+            usb_io: &usb_io.protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
             descriptors: UsbHidDescriptors {
-                interface_descriptor: EfiUsbInterfaceDescriptor::default(),
-                int_in_endpoint_descriptor: EfiUsbEndpointDescriptor {
+                interface_descriptor: empty_usb_interface_descriptor(),
+                int_in_endpoint_descriptor: usb_io::EndpointDescriptor {
                     endpoint_address: 0x81,
                     interval: 10,
                     max_packet_size: 8,
-                    ..Default::default()
+                    ..empty_usb_endpoint_descriptor()
                 },
                 report_descriptor,
             },

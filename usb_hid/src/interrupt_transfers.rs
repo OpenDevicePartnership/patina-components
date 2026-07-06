@@ -8,7 +8,7 @@
 //!
 use core::ffi::c_void;
 
-use r_efi::efi;
+use r_efi::{efi, efi::protocols::usb_io};
 
 use patina::boot_services::{
     BootServices,
@@ -17,7 +17,6 @@ use patina::boot_services::{
 };
 
 use crate::{control_transfers, device::UsbHidDevice};
-use patina::uefi_protocol::usb_io::types::*;
 
 /// Delay in 100ns units before re-submitting after a transfer error.
 /// 100ms matches the standard EDKII `EFI_USB_INTERRUPT_DELAY`.
@@ -92,7 +91,7 @@ pub fn initiate_async_interrupt_input_transfers(device: &mut UsbHidDevice) -> Re
 
     // SAFETY: usb_io was opened BY_DRIVER and is valid; transfer parameters are valid.
     let status = unsafe {
-        (usb_io.usb_async_interrupt_transfer)(
+        (usb_io.async_interrupt_transfer)(
             device.usb_io,
             device.descriptors.int_in_endpoint_descriptor.endpoint_address,
             true.into(),
@@ -117,7 +116,7 @@ pub fn shutdown_async_interrupt_input_transfers(device: &mut UsbHidDevice) -> Re
     // Cancel the async interrupt transfer.
     // SAFETY: usb_io is valid; cancellation parameters are valid.
     let status = unsafe {
-        (usb_io.usb_async_interrupt_transfer)(
+        (usb_io.async_interrupt_transfer)(
             device.usb_io,
             device.descriptors.int_in_endpoint_descriptor.endpoint_address,
             false.into(),
@@ -155,9 +154,9 @@ unsafe extern "efiapi" fn on_report_interrupt_complete(
     // SAFETY: context is a pointer to UsbHidDevice set during transfer initiation.
     let device = unsafe { &mut *(context as *mut UsbHidDevice) };
 
-    if result != EFI_USB_NOERROR {
+    if result != usb_io::USB_NOERROR {
         // Handle stall by clearing the endpoint halt.
-        if (result & EFI_USB_ERR_STALL) != 0 {
+        if (result & usb_io::USB_ERR_STALL) != 0 {
             // SAFETY: usb_io is valid for the device's lifetime.
             let usb_io = unsafe { &*device.usb_io };
             let _ = control_transfers::usb_clear_endpoint_halt(
@@ -171,7 +170,7 @@ unsafe extern "efiapi" fn on_report_interrupt_complete(
         let usb_io = unsafe { &*device.usb_io };
         // SAFETY: usb_io is valid; cancelling the current async transfer.
         let _ = unsafe {
-            (usb_io.usb_async_interrupt_transfer)(
+            (usb_io.async_interrupt_transfer)(
                 device.usb_io,
                 device.descriptors.int_in_endpoint_descriptor.endpoint_address,
                 false.into(),
@@ -213,14 +212,10 @@ mod test {
         sync::atomic::{AtomicU16, AtomicUsize, Ordering},
     };
 
-    use patina::uefi_protocol::usb_io::{
-        EfiAsyncUsbTransferCallback, EfiUsbIoProtocol,
-        types::{EfiUsbDataDirection, EfiUsbDeviceRequest},
-    };
-
     use crate::{
         device::{ReportCallbackState, UsbHidDescriptors, UsbHidDevice},
         hid_io_impl,
+        usb_hid_defs::{empty_usb_endpoint_descriptor, empty_usb_interface_descriptor},
     };
 
     // ---- Mock USB IO ----
@@ -229,7 +224,7 @@ mod test {
     /// functions can recover mock state from the `this` pointer.
     #[repr(C)]
     struct MockUsbIo {
-        protocol: EfiUsbIoProtocol,
+        protocol: usb_io::Protocol,
         control_transfer_status: efi::Status,
         async_transfer_status: efi::Status,
         async_call_count: Cell<usize>,
@@ -239,16 +234,16 @@ mod test {
     impl MockUsbIo {
         /// # Safety
         /// `this` must point to the `protocol` field of a valid `MockUsbIo`.
-        unsafe fn from_this(this: *const EfiUsbIoProtocol) -> &'static Self {
+        unsafe fn from_this(this: *mut usb_io::Protocol) -> &'static Self {
             // SAFETY: MockUsbIo is #[repr(C)] with protocol as first field.
             unsafe { &*(this as *const MockUsbIo) }
         }
     }
 
     extern "efiapi" fn mock_control_transfer(
-        this: *const EfiUsbIoProtocol,
-        _request: *const EfiUsbDeviceRequest,
-        _direction: EfiUsbDataDirection,
+        this: *mut usb_io::Protocol,
+        _request: *mut usb_io::DeviceRequest,
+        _direction: usb_io::DataDirection,
         _timeout: u32,
         _data: *mut c_void,
         _data_length: usize,
@@ -261,12 +256,12 @@ mod test {
     }
 
     extern "efiapi" fn mock_async_interrupt_transfer(
-        this: *const EfiUsbIoProtocol,
+        this: *mut usb_io::Protocol,
         _endpoint: u8,
         _is_new_transfer: efi::Boolean,
         _polling_interval: usize,
         _data_length: usize,
-        _callback: Option<EfiAsyncUsbTransferCallback>,
+        _callback: Option<usb_io::AsyncUsbTransferCallback>,
         _context: *mut c_void,
     ) -> efi::Status {
         // SAFETY: this points to a valid MockUsbIo on the test stack.
@@ -277,8 +272,8 @@ mod test {
 
     fn make_mock_usb_io(control_status: efi::Status, async_status: efi::Status) -> MockUsbIo {
         let mut protocol = crate::test_stubs::usb_io_stub();
-        protocol.usb_control_transfer = mock_control_transfer;
-        protocol.usb_async_interrupt_transfer = mock_async_interrupt_transfer;
+        protocol.control_transfer = mock_control_transfer;
+        protocol.async_interrupt_transfer = mock_async_interrupt_transfer;
         MockUsbIo {
             protocol,
             control_transfer_status: control_status,
@@ -301,14 +296,14 @@ mod test {
     fn make_device(usb_io: &MockUsbIo) -> Box<UsbHidDevice> {
         Box::new(UsbHidDevice {
             hid_io: hid_io_impl::new_hid_io_protocol(),
-            usb_io: &usb_io.protocol as *const EfiUsbIoProtocol,
+            usb_io: &usb_io.protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
             descriptors: UsbHidDescriptors {
-                interface_descriptor: EfiUsbInterfaceDescriptor::default(),
-                int_in_endpoint_descriptor: EfiUsbEndpointDescriptor {
+                interface_descriptor: empty_usb_interface_descriptor(),
+                int_in_endpoint_descriptor: usb_io::EndpointDescriptor {
                     endpoint_address: 0x81,
                     interval: 10,
                     max_packet_size: 8,
-                    ..Default::default()
+                    ..empty_usb_endpoint_descriptor()
                 },
                 report_descriptor: vec![0x05, 0x01],
             },
@@ -376,7 +371,7 @@ mod test {
                 report.as_ptr() as *mut c_void,
                 report.len(),
                 core::ptr::null_mut(),
-                EFI_USB_NOERROR,
+                usb_io::USB_NOERROR,
             )
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
@@ -411,7 +406,7 @@ mod test {
         let device_ptr = &mut *device as *mut UsbHidDevice;
         // SAFETY: device_ptr is a valid UsbHidDevice.
         let status = unsafe {
-            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, EFI_USB_ERR_STALL)
+            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, usb_io::USB_ERR_STALL)
         };
         assert_eq!(status, efi::Status::DEVICE_ERROR);
         // Should have called control transfer to clear endpoint halt.
@@ -432,7 +427,7 @@ mod test {
                 0x1000 as *mut c_void, // non-null
                 u16::MAX as usize + 1,
                 device_ptr as *mut c_void,
-                EFI_USB_NOERROR,
+                usb_io::USB_NOERROR,
             )
         };
         assert_eq!(status, efi::Status::DEVICE_ERROR);
@@ -446,7 +441,7 @@ mod test {
         let device_ptr = &mut *device as *mut UsbHidDevice;
         // SAFETY: device_ptr is a valid UsbHidDevice.
         let status = unsafe {
-            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, EFI_USB_NOERROR)
+            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, usb_io::USB_NOERROR)
         };
         assert_eq!(status, efi::Status::SUCCESS);
         core::mem::forget(device);
@@ -459,7 +454,7 @@ mod test {
         let device_ptr = &mut *device as *mut UsbHidDevice;
         // SAFETY: device_ptr is a valid UsbHidDevice.
         let status = unsafe {
-            on_report_interrupt_complete(core::ptr::null_mut(), 8, device_ptr as *mut c_void, EFI_USB_NOERROR)
+            on_report_interrupt_complete(core::ptr::null_mut(), 8, device_ptr as *mut c_void, usb_io::USB_NOERROR)
         };
         assert_eq!(status, efi::Status::SUCCESS);
         core::mem::forget(device);
@@ -478,7 +473,7 @@ mod test {
                 report.as_ptr() as *mut c_void,
                 report.len(),
                 device_ptr as *mut c_void,
-                EFI_USB_NOERROR,
+                usb_io::USB_NOERROR,
             )
         };
         assert_eq!(status, efi::Status::SUCCESS);
@@ -514,7 +509,7 @@ mod test {
                 report.as_ptr() as *mut c_void,
                 report.len(),
                 device_ptr as *mut c_void,
-                EFI_USB_NOERROR,
+                usb_io::USB_NOERROR,
             )
         };
         assert_eq!(status, efi::Status::SUCCESS);
@@ -555,14 +550,14 @@ mod test {
         let sentinel_event = 0xBEEF as efi::Event;
         Box::new(UsbHidDevice {
             hid_io: hid_io_impl::new_hid_io_protocol(),
-            usb_io: &usb_io.protocol as *const EfiUsbIoProtocol,
+            usb_io: &usb_io.protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
             descriptors: UsbHidDescriptors {
-                interface_descriptor: EfiUsbInterfaceDescriptor::default(),
-                int_in_endpoint_descriptor: EfiUsbEndpointDescriptor {
+                interface_descriptor: empty_usb_interface_descriptor(),
+                int_in_endpoint_descriptor: usb_io::EndpointDescriptor {
                     endpoint_address: 0x81,
                     interval: 10,
                     max_packet_size: 8,
-                    ..Default::default()
+                    ..empty_usb_endpoint_descriptor()
                 },
                 report_descriptor: vec![0x05, 0x01],
             },
@@ -598,7 +593,7 @@ mod test {
         let device_ptr = &mut *device as *mut UsbHidDevice;
         // SAFETY: device_ptr is a valid UsbHidDevice.
         let status = unsafe {
-            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, EFI_USB_ERR_STALL)
+            on_report_interrupt_complete(core::ptr::null_mut(), 0, device_ptr as *mut c_void, usb_io::USB_ERR_STALL)
         };
         assert_eq!(status, efi::Status::DEVICE_ERROR);
         // Should have cleared endpoint halt via control transfer.

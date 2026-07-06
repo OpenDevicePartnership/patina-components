@@ -17,8 +17,11 @@ mockall = { version = "0.13.0" }
 num_enum = { version = "0.7", default-features = false }
 # git path is a temporary placeholder until the appropriate protocol branches are checked in upstream.
 patina = { git = "https://github.com/joschock/patina", branch = "usb_hid_protocol_defs" }
-r-efi = { version = "5.0.0", default-features = false }
+r-efi = { version = "7", default-features = false }
 scroll = { version = "0.13", default-features = false, features = ["derive"] }
+
+[patch.crates-io]
+r-efi = { git = "https://github.com/joschock/r-efi.git", branch = "add_usb_io" }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"

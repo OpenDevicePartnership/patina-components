@@ -13,14 +13,11 @@
 use alloc::boxed::Box;
 use core::{ffi::c_void, ptr::NonNull};
 
-use r_efi::{efi, protocols::device_path::Protocol as EfiDevicePathProtocol};
+use r_efi::{efi, efi::protocols::usb_io, protocols::device_path::Protocol as EfiDevicePathProtocol};
 
 use patina::{boot_services::BootServices, driver_binding::DriverBinding};
 
-use patina::{
-    uefi_protocol::usb_io::{EfiUsbIoProtocol, USB_IO_PROTOCOL_GUID, types::*},
-    vendor_protocols::hid_io,
-};
+use patina::vendor_protocols::hid_io;
 
 use crate::{control_transfers, descriptors, device::UsbHidDevice, hid_io_impl, interrupt_transfers, usb_hid_defs::*};
 use patina::boot_services::event::EventTimerType;
@@ -38,11 +35,15 @@ impl UsbHidDriver {
 }
 
 /// Checks whether the controller has USB IO protocol with HID interface class.
-fn is_usb_hid(usb_io: &EfiUsbIoProtocol) -> bool {
-    let mut interface_descriptor = EfiUsbInterfaceDescriptor::default();
+fn is_usb_hid(usb_io_protocol: &usb_io::Protocol) -> bool {
+    let mut interface_descriptor = empty_usb_interface_descriptor();
     // SAFETY: usb_io and interface_descriptor are valid.
-    let status =
-        unsafe { (usb_io.usb_get_interface_descriptor)(usb_io as *const EfiUsbIoProtocol, &mut interface_descriptor) };
+    let status = unsafe {
+        (usb_io_protocol.get_interface_descriptor)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut interface_descriptor,
+        )
+    };
     if status != efi::Status::SUCCESS {
         return false;
     }
@@ -61,9 +62,9 @@ impl DriverBinding for UsbHidDriver {
         controller: efi::Handle,
         _remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
     ) -> Result<bool, efi::Status> {
-        // SAFETY: EfiUsbIoProtocol layout matches the USB IO GUID.
+        // SAFETY: usb_io::Protocol layout matches the USB IO GUID.
         let usb_io = match unsafe {
-            boot_services.open_protocol::<EfiUsbIoProtocol>(
+            boot_services.open_protocol::<usb_io::Protocol>(
                 controller,
                 self.agent,
                 controller,
@@ -76,7 +77,7 @@ impl DriverBinding for UsbHidDriver {
 
         let result = is_usb_hid(usb_io);
 
-        boot_services.close_protocol(controller, USB_IO_PROTOCOL_GUID.as_efi_guid(), self.agent, controller).ok();
+        boot_services.close_protocol(controller, &usb_io::PROTOCOL_GUID, self.agent, controller).ok();
 
         Ok(result)
     }
@@ -91,9 +92,9 @@ impl DriverBinding for UsbHidDriver {
         log::trace!("USB HID: driver_binding_start on controller {:?}", controller);
 
         // Open USB IO BY_DRIVER for exclusive access.
-        // SAFETY: EfiUsbIoProtocol layout matches the USB IO GUID.
+        // SAFETY: usb_io::Protocol layout matches the USB IO GUID.
         let usb_io = unsafe {
-            boot_services.open_protocol::<EfiUsbIoProtocol>(
+            boot_services.open_protocol::<usb_io::Protocol>(
                 controller,
                 self.agent,
                 controller,
@@ -125,7 +126,7 @@ impl DriverBinding for UsbHidDriver {
         // Build the device context and leak it for UEFI protocol ownership.
         let device_ptr = Box::into_raw(Box::new(UsbHidDevice {
             hid_io: hid_io_impl::new_hid_io_protocol(),
-            usb_io: usb_io as *const EfiUsbIoProtocol,
+            usb_io: usb_io as *mut usb_io::Protocol,
             descriptors,
             report_callback: crate::device::ReportCallbackState::default(),
             timer_services: boot_services as &'static dyn interrupt_transfers::TransferRecoveryTimer,
@@ -229,9 +230,7 @@ impl DriverBinding for UsbHidDriver {
 
 impl UsbHidDriver {
     fn close_usb_io(&self, boot_services: &impl BootServices, controller: efi::Handle) {
-        if let Err(status) =
-            boot_services.close_protocol(controller, USB_IO_PROTOCOL_GUID.as_efi_guid(), self.agent, controller)
-        {
+        if let Err(status) = boot_services.close_protocol(controller, &usb_io::PROTOCOL_GUID, self.agent, controller) {
             log::error!("USB HID: error closing USB IO protocol: {status:x?}");
         }
     }
@@ -253,7 +252,7 @@ mod test {
     #[test]
     fn supported_returns_false_when_no_usb_io() {
         let boot_services = mock_boot_services();
-        boot_services.expect_open_protocol::<EfiUsbIoProtocol>().returning(|_, _, _, _| Err(efi::Status::NOT_FOUND));
+        boot_services.expect_open_protocol::<usb_io::Protocol>().returning(|_, _, _, _| Err(efi::Status::NOT_FOUND));
 
         let driver = UsbHidDriver::new(0x1 as efi::Handle);
         assert_eq!(driver.driver_binding_supported(boot_services, 0x2 as efi::Handle, None), Ok(false));

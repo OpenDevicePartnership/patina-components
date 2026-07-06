@@ -9,22 +9,17 @@
 use alloc::vec::Vec;
 use core::ffi::c_void;
 
-use r_efi::efi;
+use r_efi::{efi, efi::protocols::usb_io};
 
 use patina::vendor_protocols::hid_io::{HidIoProtocol, HidIoReportCallback};
-
-use patina::uefi_protocol::usb_io::{
-    EfiUsbIoProtocol,
-    types::{EfiUsbEndpointDescriptor, EfiUsbInterfaceDescriptor},
-};
 
 use crate::interrupt_transfers::TransferRecoveryTimer;
 
 /// USB HID descriptor set read from the device during initialization.
 #[derive(Debug)]
 pub struct UsbHidDescriptors {
-    pub interface_descriptor: EfiUsbInterfaceDescriptor,
-    pub int_in_endpoint_descriptor: EfiUsbEndpointDescriptor,
+    pub interface_descriptor: usb_io::InterfaceDescriptor,
+    pub int_in_endpoint_descriptor: usb_io::EndpointDescriptor,
     pub report_descriptor: Vec<u8>,
 }
 
@@ -45,7 +40,7 @@ pub struct UsbHidDevice {
     // Note: a direct cast is used to recover the UsbHidDevice pointer from the HidIoProtocol pointer, so hid_io must be
     // the first field.
     pub hid_io: HidIoProtocol,
-    pub usb_io: *const EfiUsbIoProtocol,
+    pub usb_io: *mut usb_io::Protocol,
     pub descriptors: UsbHidDescriptors,
     pub report_callback: ReportCallbackState,
     /// Boot services timer interface for delayed error recovery.
@@ -85,10 +80,10 @@ mod test {
 
         let device = Box::new(UsbHidDevice {
             hid_io: hid_io_impl::new_hid_io_protocol(),
-            usb_io: core::ptr::null(),
+            usb_io: core::ptr::null_mut(),
             descriptors: UsbHidDescriptors {
-                interface_descriptor: EfiUsbInterfaceDescriptor::default(),
-                int_in_endpoint_descriptor: EfiUsbEndpointDescriptor::default(),
+                interface_descriptor: crate::usb_hid_defs::empty_usb_interface_descriptor(),
+                int_in_endpoint_descriptor: crate::usb_hid_defs::empty_usb_endpoint_descriptor(),
                 report_descriptor: Vec::new(),
             },
             report_callback: ReportCallbackState::default(),

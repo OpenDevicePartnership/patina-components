@@ -8,15 +8,17 @@
 //!
 use core::ffi::c_void;
 
-use r_efi::efi;
-
-use patina::uefi_protocol::usb_io::{EfiUsbIoProtocol, types::*};
+use r_efi::{efi, efi::protocols::usb_io};
 
 use crate::usb_hid_defs::*;
 
 /// Sends a USB HID SET_PROTOCOL request to switch the device to report mode.
-pub fn set_protocol_request(usb_io: &EfiUsbIoProtocol, interface_number: u8, protocol: u8) -> Result<(), efi::Status> {
-    let request = EfiUsbDeviceRequest {
+pub fn set_protocol_request(
+    usb_io_protocol: &usb_io::Protocol,
+    interface_number: u8,
+    protocol: u8,
+) -> Result<(), efi::Status> {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_CLASS_INTERFACE_OUT,
         request: USB_HID_SET_PROTOCOL_REQUEST,
         value: protocol as u16,
@@ -26,10 +28,10 @@ pub fn set_protocol_request(usb_io: &EfiUsbIoProtocol, interface_number: u8, pro
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::NoData,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::NO_DATA,
             USB_TRANSFER_TIMEOUT_MS,
             core::ptr::null_mut(),
             0,
@@ -44,14 +46,14 @@ pub fn set_protocol_request(usb_io: &EfiUsbIoProtocol, interface_number: u8, pro
 
 /// Sends a USB HID GET_REPORT class-specific request.
 pub fn usb_get_report_request(
-    usb_io: &EfiUsbIoProtocol,
+    usb_io_protocol: &usb_io::Protocol,
     interface_number: u8,
     report_id: u8,
     report_type: u8,
     report_len: u16,
     report: *mut u8,
 ) -> Result<(), efi::Status> {
-    let request = EfiUsbDeviceRequest {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_CLASS_INTERFACE_IN,
         request: USB_HID_GET_REPORT_REQUEST,
         value: (report_type as u16) << 8 | report_id as u16,
@@ -61,10 +63,10 @@ pub fn usb_get_report_request(
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request, report buffer, and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::DataIn,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::DATA_IN,
             USB_TRANSFER_TIMEOUT_MS,
             report as *mut c_void,
             report_len as usize,
@@ -79,14 +81,14 @@ pub fn usb_get_report_request(
 
 /// Sends a USB HID SET_REPORT class-specific request.
 pub fn usb_set_report_request(
-    usb_io: &EfiUsbIoProtocol,
+    usb_io_protocol: &usb_io::Protocol,
     interface_number: u8,
     report_id: u8,
     report_type: u8,
     report_len: u16,
     report: *const u8,
 ) -> Result<(), efi::Status> {
-    let request = EfiUsbDeviceRequest {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_CLASS_INTERFACE_OUT,
         request: USB_HID_SET_REPORT_REQUEST,
         value: (report_type as u16) << 8 | report_id as u16,
@@ -96,10 +98,10 @@ pub fn usb_set_report_request(
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request, report buffer, and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::DataOut,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::DATA_OUT,
             USB_TRANSFER_TIMEOUT_MS,
             report as *mut c_void,
             report_len as usize,
@@ -113,8 +115,8 @@ pub fn usb_set_report_request(
 }
 
 /// Sends a USB CLEAR_FEATURE(ENDPOINT_HALT) request.
-pub fn usb_clear_endpoint_halt(usb_io: &EfiUsbIoProtocol, endpoint_address: u8) -> Result<(), efi::Status> {
-    let request = EfiUsbDeviceRequest {
+pub fn usb_clear_endpoint_halt(usb_io_protocol: &usb_io::Protocol, endpoint_address: u8) -> Result<(), efi::Status> {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_STANDARD_ENDPOINT_OUT,
         request: USB_REQ_CLEAR_FEATURE,
         value: USB_FEATURE_ENDPOINT_HALT,
@@ -124,10 +126,10 @@ pub fn usb_clear_endpoint_halt(usb_io: &EfiUsbIoProtocol, endpoint_address: u8) 
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::NoData,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::NO_DATA,
             USB_TRANSFER_TIMEOUT_MS,
             core::ptr::null_mut(),
             0,
@@ -142,12 +144,12 @@ pub fn usb_clear_endpoint_halt(usb_io: &EfiUsbIoProtocol, endpoint_address: u8) 
 
 /// Reads the report descriptor from the device via GET_DESCRIPTOR.
 pub fn usb_get_report_descriptor(
-    usb_io: &EfiUsbIoProtocol,
+    usb_io_protocol: &usb_io::Protocol,
     interface_number: u8,
     descriptor_length: u16,
     descriptor_buffer: *mut u8,
 ) -> Result<(), efi::Status> {
-    let request = EfiUsbDeviceRequest {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_STANDARD_DEVICE_IN | 0x01, // Interface recipient
         request: USB_REQ_GET_DESCRIPTOR,
         value: (USB_DESC_TYPE_REPORT as u16) << 8,
@@ -157,10 +159,10 @@ pub fn usb_get_report_descriptor(
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request, descriptor buffer, and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::DataIn,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::DATA_IN,
             USB_TRANSFER_TIMEOUT_MS,
             descriptor_buffer as *mut c_void,
             descriptor_length as usize,
@@ -180,7 +182,7 @@ mod test {
 
     // ---- Mock USB IO ----
 
-    /// Captured parameters from the most recent `usb_control_transfer` call.
+    /// Captured parameters from the most recent control transfer call.
     #[derive(Clone, Copy, Default)]
     struct CapturedRequest {
         request_type: u8,
@@ -196,7 +198,7 @@ mod test {
     /// mock function can recover mock state from the `this` pointer.
     #[repr(C)]
     struct MockUsbIo {
-        protocol: EfiUsbIoProtocol,
+        protocol: usb_io::Protocol,
         status: efi::Status,
         captured: Cell<CapturedRequest>,
     }
@@ -204,16 +206,16 @@ mod test {
     impl MockUsbIo {
         /// # Safety
         /// `this` must point to the `protocol` field of a valid `MockUsbIo`.
-        unsafe fn from_this(this: *const EfiUsbIoProtocol) -> &'static Self {
+        unsafe fn from_this(this: *mut usb_io::Protocol) -> &'static Self {
             // SAFETY: MockUsbIo is #[repr(C)] with protocol as first field.
             unsafe { &*(this as *const MockUsbIo) }
         }
     }
 
     extern "efiapi" fn mock_control_transfer(
-        this: *const EfiUsbIoProtocol,
-        request: *const EfiUsbDeviceRequest,
-        direction: EfiUsbDataDirection,
+        this: *mut usb_io::Protocol,
+        request: *mut usb_io::DeviceRequest,
+        direction: usb_io::DataDirection,
         _timeout: u32,
         _data: *mut c_void,
         data_length: usize,
@@ -237,7 +239,7 @@ mod test {
 
     fn make_mock(status: efi::Status) -> MockUsbIo {
         let mut protocol = crate::test_stubs::usb_io_stub();
-        protocol.usb_control_transfer = mock_control_transfer;
+        protocol.control_transfer = mock_control_transfer;
         MockUsbIo { protocol, status, captured: Cell::new(CapturedRequest::default()) }
     }
 
@@ -253,7 +255,7 @@ mod test {
         assert_eq!(cap.value, REPORT_PROTOCOL as u16);
         assert_eq!(cap.index, 2);
         assert_eq!(cap.length, 0);
-        assert_eq!(cap.direction, EfiUsbDataDirection::NoData as u32);
+        assert_eq!(cap.direction, usb_io::NO_DATA);
         assert_eq!(cap.data_length, 0);
     }
 
@@ -276,7 +278,7 @@ mod test {
         assert_eq!(cap.value, (0x01u16 << 8) | 0x03);
         assert_eq!(cap.index, 1);
         assert_eq!(cap.length, 16);
-        assert_eq!(cap.direction, EfiUsbDataDirection::DataIn as u32);
+        assert_eq!(cap.direction, usb_io::DATA_IN);
         assert_eq!(cap.data_length, 16);
     }
 
@@ -303,7 +305,7 @@ mod test {
         assert_eq!(cap.value, (0x02u16 << 8) | 0x01);
         assert_eq!(cap.index, 0);
         assert_eq!(cap.length, 4);
-        assert_eq!(cap.direction, EfiUsbDataDirection::DataOut as u32);
+        assert_eq!(cap.direction, usb_io::DATA_OUT);
         assert_eq!(cap.data_length, 4);
     }
 
@@ -329,7 +331,7 @@ mod test {
         assert_eq!(cap.value, USB_FEATURE_ENDPOINT_HALT);
         assert_eq!(cap.index, 0x81);
         assert_eq!(cap.length, 0);
-        assert_eq!(cap.direction, EfiUsbDataDirection::NoData as u32);
+        assert_eq!(cap.direction, usb_io::NO_DATA);
         assert_eq!(cap.data_length, 0);
     }
 
@@ -352,7 +354,7 @@ mod test {
         assert_eq!(cap.value, (USB_DESC_TYPE_REPORT as u16) << 8);
         assert_eq!(cap.index, 0);
         assert_eq!(cap.length, 64);
-        assert_eq!(cap.direction, EfiUsbDataDirection::DataIn as u32);
+        assert_eq!(cap.direction, usb_io::DATA_IN);
         assert_eq!(cap.data_length, 64);
     }
 

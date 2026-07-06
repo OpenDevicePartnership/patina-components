@@ -9,12 +9,9 @@
 use alloc::vec;
 use core::{ffi::c_void, mem::size_of};
 
-use r_efi::efi;
+use r_efi::{efi, efi::protocols::usb_io};
 
-use crate::{control_transfers, device::UsbHidDescriptors};
-use patina::uefi_protocol::usb_io::{EfiUsbIoProtocol, types::*};
-
-use crate::usb_hid_defs::*;
+use crate::{control_transfers, device::UsbHidDescriptors, usb_hid_defs::*};
 
 /// Owned wrapper around the variable-length USB HID descriptor.
 ///
@@ -49,28 +46,31 @@ impl HidDescriptor {
 /// Returns a [`UsbHidDescriptors`] containing the interface, interrupt-in
 /// endpoint, and report descriptors. Returns an error if the interrupt-in
 /// endpoint is not found.
-pub fn read_descriptors(usb_io: &EfiUsbIoProtocol) -> Result<UsbHidDescriptors, efi::Status> {
-    let usb_io_ptr = usb_io as *const EfiUsbIoProtocol;
+pub fn read_descriptors(usb_io_protocol: &usb_io::Protocol) -> Result<UsbHidDescriptors, efi::Status> {
+    let usb_io_ptr = usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol;
 
-    let mut interface_descriptor = EfiUsbInterfaceDescriptor::default();
+    let mut interface_descriptor = empty_usb_interface_descriptor();
     // SAFETY: usb_io and interface_descriptor are valid.
-    let status = unsafe { (usb_io.usb_get_interface_descriptor)(usb_io_ptr, &mut interface_descriptor) };
+    let status = unsafe { (usb_io_protocol.get_interface_descriptor)(usb_io_ptr, &mut interface_descriptor) };
     if status != efi::Status::SUCCESS {
         return Err(status);
     }
 
+    let interface_class = interface_descriptor.interface_class;
+    let interface_sub_class = interface_descriptor.interface_sub_class;
+    let interface_protocol = interface_descriptor.interface_protocol;
     log::trace!(
         "USB HID: interface class: 0x{:x}, subclass: 0x{:x}, protocol: 0x{:x}",
-        interface_descriptor.interface_class,
-        interface_descriptor.interface_sub_class,
-        interface_descriptor.interface_protocol,
+        interface_class,
+        interface_sub_class,
+        interface_protocol,
     );
 
-    let mut int_in_endpoint_descriptor = EfiUsbEndpointDescriptor::default();
+    let mut int_in_endpoint_descriptor = empty_usb_endpoint_descriptor();
     for index in 0..interface_descriptor.num_endpoints {
-        let mut endpoint = EfiUsbEndpointDescriptor::default();
+        let mut endpoint = empty_usb_endpoint_descriptor();
         // SAFETY: usb_io and endpoint descriptor are valid.
-        let status = unsafe { (usb_io.usb_get_endpoint_descriptor)(usb_io_ptr, index, &mut endpoint) };
+        let status = unsafe { (usb_io_protocol.get_endpoint_descriptor)(usb_io_ptr, index, &mut endpoint) };
         if status != efi::Status::SUCCESS {
             return Err(status);
         }
@@ -88,8 +88,8 @@ pub fn read_descriptors(usb_io: &EfiUsbIoProtocol) -> Result<UsbHidDescriptors, 
         return Err(efi::Status::DEVICE_ERROR);
     }
 
-    let hid_descriptor = get_full_hid_descriptor(usb_io, &interface_descriptor)?;
-    let report_descriptor = read_report_descriptor(usb_io, &interface_descriptor, &hid_descriptor)?;
+    let hid_descriptor = get_full_hid_descriptor(usb_io_protocol, &interface_descriptor)?;
+    let report_descriptor = read_report_descriptor(usb_io_protocol, &interface_descriptor, &hid_descriptor)?;
 
     Ok(UsbHidDescriptors { interface_descriptor, int_in_endpoint_descriptor, report_descriptor })
 }
@@ -97,8 +97,8 @@ pub fn read_descriptors(usb_io: &EfiUsbIoProtocol) -> Result<UsbHidDescriptors, 
 /// Reads the report descriptor from the device using the HID descriptor's
 /// class descriptor entries to determine the length.
 fn read_report_descriptor(
-    usb_io: &EfiUsbIoProtocol,
-    interface_descriptor: &EfiUsbInterfaceDescriptor,
+    usb_io_protocol: &usb_io::Protocol,
+    interface_descriptor: &usb_io::InterfaceDescriptor,
     hid_descriptor: &HidDescriptor,
 ) -> Result<alloc::vec::Vec<u8>, efi::Status> {
     let report_entry = hid_descriptor.class_descriptors().iter().find(|d| d.descriptor_type == USB_DESC_TYPE_REPORT);
@@ -110,7 +110,7 @@ fn read_report_descriptor(
     let mut buffer = vec![0u8; descriptor_length];
 
     control_transfers::usb_get_report_descriptor(
-        usb_io,
+        usb_io_protocol,
         interface_descriptor.interface_number,
         descriptor_length as u16,
         buffer.as_mut_ptr(),
@@ -122,12 +122,17 @@ fn read_report_descriptor(
 /// Retrieves the full HID descriptor for the given interface by parsing the
 /// configuration descriptor.
 fn get_full_hid_descriptor(
-    usb_io: &EfiUsbIoProtocol,
-    interface_descriptor: &EfiUsbInterfaceDescriptor,
+    usb_io_protocol: &usb_io::Protocol,
+    interface_descriptor: &usb_io::InterfaceDescriptor,
 ) -> Result<HidDescriptor, efi::Status> {
-    let mut config_desc = EfiUsbConfigDescriptor::default();
+    let mut config_desc = empty_usb_config_descriptor();
     // SAFETY: usb_io and config_desc are valid.
-    let status = unsafe { (usb_io.usb_get_config_descriptor)(usb_io as *const EfiUsbIoProtocol, &mut config_desc) };
+    let status = unsafe {
+        (usb_io_protocol.get_config_descriptor)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut config_desc,
+        )
+    };
     if status != efi::Status::SUCCESS {
         return Err(status);
     }
@@ -138,7 +143,7 @@ fn get_full_hid_descriptor(
     // Read the full configuration descriptor using GET_DESCRIPTOR control transfer.
     let descriptor_value =
         (USB_DESC_TYPE_CONFIG as u16) << 8 | (config_desc.configuration_value.wrapping_sub(1)) as u16;
-    let request = EfiUsbDeviceRequest {
+    let mut request = usb_io::DeviceRequest {
         request_type: USB_REQ_TYPE_STANDARD_DEVICE_IN,
         request: USB_REQ_GET_DESCRIPTOR,
         value: descriptor_value,
@@ -148,10 +153,10 @@ fn get_full_hid_descriptor(
     let mut transfer_status: u32 = 0;
     // SAFETY: usb_io is valid; request, buffer, and status pointers are valid.
     let status = unsafe {
-        (usb_io.usb_control_transfer)(
-            usb_io as *const EfiUsbIoProtocol,
-            &request,
-            EfiUsbDataDirection::DataIn,
+        (usb_io_protocol.control_transfer)(
+            usb_io_protocol as *const usb_io::Protocol as *mut usb_io::Protocol,
+            &mut request,
+            usb_io::DATA_IN,
             USB_TRANSFER_TIMEOUT_MS,
             buffer.as_mut_ptr() as *mut c_void,
             total_length,
@@ -169,7 +174,7 @@ fn get_full_hid_descriptor(
 /// immediately follows the matching interface descriptor.
 fn find_hid_descriptor_in_config(
     buffer: &[u8],
-    interface_descriptor: &EfiUsbInterfaceDescriptor,
+    interface_descriptor: &usb_io::InterfaceDescriptor,
 ) -> Result<HidDescriptor, efi::Status> {
     let mut cursor: usize = 0;
 
@@ -183,11 +188,11 @@ fn find_hid_descriptor_in_config(
         }
 
         if header.desc_type == USB_DESC_TYPE_INTERFACE {
-            if cursor + size_of::<EfiUsbInterfaceDescriptor>() > buffer.len() {
+            if cursor + size_of::<usb_io::InterfaceDescriptor>() > buffer.len() {
                 break;
             }
-            // SAFETY: bounds check above ensures EfiUsbInterfaceDescriptor fits at cursor.
-            let interface = unsafe { &*(buffer.as_ptr().add(cursor) as *const EfiUsbInterfaceDescriptor) };
+            // SAFETY: bounds check above ensures InterfaceDescriptor fits at cursor.
+            let interface = unsafe { &*(buffer.as_ptr().add(cursor) as *const usb_io::InterfaceDescriptor) };
             if interface.interface_number == interface_descriptor.interface_number
                 && interface.alternate_setting == interface_descriptor.alternate_setting
             {
@@ -271,20 +276,20 @@ mod test {
         slices.iter().flat_map(|s| s.iter().copied()).collect()
     }
 
-    fn make_interface(number: u8, alt: u8, num_endpoints: u8) -> EfiUsbInterfaceDescriptor {
-        EfiUsbInterfaceDescriptor {
+    fn make_interface(number: u8, alt: u8, num_endpoints: u8) -> usb_io::InterfaceDescriptor {
+        usb_io::InterfaceDescriptor {
             length: 9,
             descriptor_type: USB_DESC_TYPE_INTERFACE,
             interface_number: number,
             alternate_setting: alt,
             num_endpoints,
             interface_class: CLASS_HID,
-            ..Default::default()
+            ..empty_usb_interface_descriptor()
         }
     }
 
-    fn make_endpoint(address: u8, attributes: u8) -> EfiUsbEndpointDescriptor {
-        EfiUsbEndpointDescriptor {
+    fn make_endpoint(address: u8, attributes: u8) -> usb_io::EndpointDescriptor {
+        usb_io::EndpointDescriptor {
             length: 7,
             descriptor_type: 5,
             endpoint_address: address,
@@ -336,7 +341,7 @@ mod test {
     fn find_hid_desc_fails_when_interface_truncated_in_buffer() {
         let interface = make_interface(0, 0, 1);
         // Buffer has the UsbDescHead for an interface (2 bytes match) but is too short
-        // for a full EfiUsbInterfaceDescriptor.
+        // for a full InterfaceDescriptor.
         let buffer = vec![9, USB_DESC_TYPE_INTERFACE, 0, 0];
         assert_eq!(find_hid_descriptor_in_config(&buffer, &interface).unwrap_err(), efi::Status::UNSUPPORTED);
     }
@@ -449,18 +454,18 @@ mod test {
         assert_eq!(find_hid_descriptor_in_config(&buffer, &interface).unwrap_err(), efi::Status::UNSUPPORTED);
     }
 
-    // ---- Mock EfiUsbIoProtocol ----
+    // ---- Mock USB IO protocol ----
 
-    /// Test wrapper containing an `EfiUsbIoProtocol` as the first field so that
+    /// Test wrapper containing a USB IO protocol as the first field so that
     /// extern "efiapi" mock functions can recover the mock data via the `this`
     /// pointer (same containing-record pattern used by production code).
     #[repr(C)]
     struct MockUsbIo {
-        protocol: EfiUsbIoProtocol,
-        interface_desc: EfiUsbInterfaceDescriptor,
+        protocol: usb_io::Protocol,
+        interface_desc: usb_io::InterfaceDescriptor,
         interface_status: efi::Status,
-        endpoints: Vec<EfiUsbEndpointDescriptor>,
-        config_desc: EfiUsbConfigDescriptor,
+        endpoints: Vec<usb_io::EndpointDescriptor>,
+        config_desc: usb_io::ConfigDescriptor,
         config_status: efi::Status,
         config_buffer: Vec<u8>,
         report_descriptor: Vec<u8>,
@@ -471,15 +476,15 @@ mod test {
     impl MockUsbIo {
         /// # Safety
         /// `this` must point to the `protocol` field of a valid `MockUsbIo`.
-        unsafe fn from_this(this: *const EfiUsbIoProtocol) -> &'static Self {
+        unsafe fn from_this(this: *mut usb_io::Protocol) -> &'static Self {
             // SAFETY: MockUsbIo is #[repr(C)] with protocol as first field.
             unsafe { &*(this as *const MockUsbIo) }
         }
     }
 
     extern "efiapi" fn mock_get_interface_descriptor(
-        this: *const EfiUsbIoProtocol,
-        desc: *mut EfiUsbInterfaceDescriptor,
+        this: *mut usb_io::Protocol,
+        desc: *mut usb_io::InterfaceDescriptor,
     ) -> efi::Status {
         // SAFETY: this points to a valid MockUsbIo on the test stack.
         let mock = unsafe { MockUsbIo::from_this(this) };
@@ -493,9 +498,9 @@ mod test {
     }
 
     extern "efiapi" fn mock_get_endpoint_descriptor(
-        this: *const EfiUsbIoProtocol,
+        this: *mut usb_io::Protocol,
         index: u8,
-        desc: *mut EfiUsbEndpointDescriptor,
+        desc: *mut usb_io::EndpointDescriptor,
     ) -> efi::Status {
         // SAFETY: this points to a valid MockUsbIo on the test stack.
         let mock = unsafe { MockUsbIo::from_this(this) };
@@ -512,8 +517,8 @@ mod test {
     }
 
     extern "efiapi" fn mock_get_config_descriptor(
-        this: *const EfiUsbIoProtocol,
-        desc: *mut EfiUsbConfigDescriptor,
+        this: *mut usb_io::Protocol,
+        desc: *mut usb_io::ConfigDescriptor,
     ) -> efi::Status {
         // SAFETY: this points to a valid MockUsbIo on the test stack.
         let mock = unsafe { MockUsbIo::from_this(this) };
@@ -527,9 +532,9 @@ mod test {
     }
 
     extern "efiapi" fn mock_control_transfer(
-        this: *const EfiUsbIoProtocol,
-        _request: *const EfiUsbDeviceRequest,
-        _direction: EfiUsbDataDirection,
+        this: *mut usb_io::Protocol,
+        _request: *mut usb_io::DeviceRequest,
+        _direction: usb_io::DataDirection,
         _timeout: u32,
         data: *mut c_void,
         data_length: usize,
@@ -558,29 +563,29 @@ mod test {
     }
 
     fn build_mock(
-        interface: EfiUsbInterfaceDescriptor,
-        endpoints: Vec<EfiUsbEndpointDescriptor>,
+        interface: usb_io::InterfaceDescriptor,
+        endpoints: Vec<usb_io::EndpointDescriptor>,
         config_buffer: Vec<u8>,
         report_descriptor: Vec<u8>,
     ) -> MockUsbIo {
         let total_length = config_buffer.len() as u16;
         let mut protocol = crate::test_stubs::usb_io_stub();
-        protocol.usb_control_transfer = mock_control_transfer;
-        protocol.usb_get_config_descriptor = mock_get_config_descriptor;
-        protocol.usb_get_interface_descriptor = mock_get_interface_descriptor;
-        protocol.usb_get_endpoint_descriptor = mock_get_endpoint_descriptor;
+        protocol.control_transfer = mock_control_transfer;
+        protocol.get_config_descriptor = mock_get_config_descriptor;
+        protocol.get_interface_descriptor = mock_get_interface_descriptor;
+        protocol.get_endpoint_descriptor = mock_get_endpoint_descriptor;
         MockUsbIo {
             protocol,
             interface_desc: interface,
             interface_status: efi::Status::SUCCESS,
             endpoints,
-            config_desc: EfiUsbConfigDescriptor {
+            config_desc: usb_io::ConfigDescriptor {
                 length: 9,
                 descriptor_type: USB_DESC_TYPE_CONFIG,
                 total_length,
                 num_interfaces: 1,
                 configuration_value: 1,
-                ..Default::default()
+                ..empty_usb_config_descriptor()
             },
             config_status: efi::Status::SUCCESS,
             config_buffer,

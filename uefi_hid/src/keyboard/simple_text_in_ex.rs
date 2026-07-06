@@ -338,7 +338,8 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
             if let Some(mut pending_key) = pending_key {
                 let key_ptr = &mut pending_key as *mut protocols::simple_text_input_ex::KeyData;
                 for callback in pending_callbacks {
-                    let _ = callback(key_ptr);
+                    // SAFETY: key_ptr points to a valid KeyData value for the duration of the callback.
+                    let _ = unsafe { callback(key_ptr) };
                 }
             } else {
                 break;

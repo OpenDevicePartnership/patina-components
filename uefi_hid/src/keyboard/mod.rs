@@ -616,22 +616,28 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
         };
 
         let mut hii_handle: r_efi::hii::Handle = ptr::null_mut();
-        let status = (hii_database_protocol.new_package_list)(
-            hii_database_protocol_ptr,
-            layout::get_default_keyboard_pkg_list_buffer().as_ptr() as *const r_efi::hii::PackageListHeader,
-            ptr::null_mut(),
-            &mut hii_handle as *mut r_efi::hii::Handle,
-        );
+        // SAFETY: hii_database_protocol_ptr is a valid HII database protocol pointer and arguments follow the UEFI API.
+        let status = unsafe {
+            (hii_database_protocol.new_package_list)(
+                hii_database_protocol_ptr,
+                layout::get_default_keyboard_pkg_list_buffer().as_ptr() as *const r_efi::hii::PackageListHeader,
+                ptr::null_mut(),
+                &mut hii_handle as *mut r_efi::hii::Handle,
+            )
+        };
 
         if status.is_error() {
             log::error!("keyboard::install_default_layout: Failed to install keyboard layout package: {:x?}", status);
             return Err(status);
         }
 
-        let status = (hii_database_protocol.set_keyboard_layout)(
-            hii_database_protocol_ptr,
-            &layout::DEFAULT_KEYBOARD_LAYOUT_GUID as *const efi::Guid as *mut efi::Guid,
-        );
+        // SAFETY: hii_database_protocol_ptr is valid and the layout GUID pointer references a static GUID.
+        let status = unsafe {
+            (hii_database_protocol.set_keyboard_layout)(
+                hii_database_protocol_ptr,
+                &layout::DEFAULT_KEYBOARD_LAYOUT_GUID as *const efi::Guid as *mut efi::Guid,
+            )
+        };
         if status.is_error() {
             log::error!("keyboard::install_default_layout: Failed to set keyboard layout: {:x?}", status);
             return Err(status);
@@ -866,12 +872,15 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
 
         // retrieve keyboard layout size
         let mut layout_buffer_len: u16 = 0;
-        match (hii_database_protocol.get_keyboard_layout)(
-            hii_database_protocol_ptr,
-            ptr::null_mut(),
-            &mut layout_buffer_len as *mut u16,
-            ptr::null_mut(),
-        ) {
+        // SAFETY: hii_database_protocol_ptr is valid; null buffer is permitted here to query the required size.
+        match unsafe {
+            (hii_database_protocol.get_keyboard_layout)(
+                hii_database_protocol_ptr,
+                ptr::null_mut(),
+                &mut layout_buffer_len as *mut u16,
+                ptr::null_mut(),
+            )
+        } {
             efi::Status::NOT_FOUND => return,
             status if status != efi::Status::BUFFER_TOO_SMALL => {
                 log::error!(
@@ -884,12 +893,15 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
         }
 
         let mut keyboard_layout_buffer = vec![0u8; layout_buffer_len as usize];
-        let status = (hii_database_protocol.get_keyboard_layout)(
-            hii_database_protocol_ptr,
-            ptr::null_mut(),
-            &mut layout_buffer_len as *mut u16,
-            keyboard_layout_buffer.as_mut_ptr() as *mut protocols::hii_database::KeyboardLayout<0>,
-        );
+        // SAFETY: keyboard_layout_buffer has layout_buffer_len bytes and is passed as the UEFI keyboard layout buffer.
+        let status = unsafe {
+            (hii_database_protocol.get_keyboard_layout)(
+                hii_database_protocol_ptr,
+                ptr::null_mut(),
+                &mut layout_buffer_len as *mut u16,
+                keyboard_layout_buffer.as_mut_ptr() as *mut protocols::hii_database::KeyboardLayout<0>,
+            )
+        };
 
         if status.is_error() {
             log::error!("Unexpected return from get_keyboard_layout: {:x?}", status);
@@ -973,7 +985,10 @@ extern "efiapi" fn reset_notification_function(key_data: *mut protocols::simple_
     let rt_ptr = crate::RUNTIME_SERVICES.load(core::sync::atomic::Ordering::SeqCst);
     // SAFETY: rt_ptr is loaded from a global atomic; null is handled by the if-let.
     if let Some(runtime_services) = unsafe { rt_ptr.as_ref() } {
-        (runtime_services.reset_system)(efi::RESET_COLD, efi::Status::SUCCESS, 0, core::ptr::null_mut());
+        // SAFETY: runtime_services points to the firmware runtime services table set during component initialization.
+        unsafe {
+            (runtime_services.reset_system)(efi::RESET_COLD, efi::Status::SUCCESS, 0, core::ptr::null_mut());
+        }
     }
     // reset_system should not return; if it does, there is nothing useful to do.
     efi::Status::SUCCESS
