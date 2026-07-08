@@ -8,77 +8,184 @@
 default_to_workspace = false
 
 [env]
-BUILD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings"
+NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --timings"
+STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
 RUSTC_PROFILE = "dev"
-RUSTC_TARGET = "debug"
 
 [env.release]
 RUSTC_PROFILE = "release"
-RUSTC_TARGET = "release"
 
-[tasks.build-x64]
-description = """Builds patina components as UEFI target.
+[tasks.install-tools]
+description = """Installs the project tools pinned in the `[tools]` section of
+`rust-toolchain.toml` at their specified versions. Each tool is installed with
+`cargo binstall`, falling back to `cargo install` when a prebuilt binary is not
+available. CI also installs and tests the tools in this section.
 
-Example:
-    `cargo make build-x64`
-    `cargo make -p release build-x64`
-"""
-clear = true
-command = "cargo"
-args = ["build", "--target", "x86_64-unknown-uefi", "@@split(BUILD_FLAGS, )", "@@split(UEFI_CRATES, )"]
-
-[tasks.build-aarch64]
-description = """Builds patina components as UEFI target.
+`cargo-binstall` (https://github.com/cargo-bins/cargo-binstall) is installed
+automatically with `cargo install` when it is not already present.
 
 Example:
-    `cargo make build-aarch64`
-    `cargo make -p release build-aarch64`
+    `cargo make install-tools`
 """
 clear = true
-command = "cargo"
-args = ["build", "--target", "aarch64-unknown-uefi", "@@split(BUILD_FLAGS, )", "@@split(UEFI_CRATES, )"]
+install_crate = false
+script_runner = "@duckscript"
+script = '''
+# cargo-binstall is used to install tools.
+binstall_path = which cargo-binstall
+if is_empty ${binstall_path}
+    echo "==> cargo-binstall not found. Installing it with cargo install..."
+    exec --fail-on-error cargo install cargo-binstall
+end
+
+toolchain_file = readfile rust-toolchain.toml
+lines = split ${toolchain_file} "\n"
+
+# Track whether the current line is inside the `[tools]` section. Parsing runs
+# from the `[tools]` header until the next section header.
+in_tools = set false
+for line in ${lines}
+    trimmed = trim ${line}
+    is_section = starts_with ${trimmed} "["
+    if ${is_section}
+        if eq ${trimmed} "[tools]"
+            in_tools = set true
+        else
+            in_tools = set false
+        end
+    elseif ${in_tools}
+        is_comment = starts_with ${trimmed} "#"
+        is_blank = is_empty ${trimmed}
+        has_assignment = contains ${trimmed} "="
+        # Only process `name = "version"` lines.
+        if not ${is_blank}
+            if not ${is_comment}
+                if ${has_assignment}
+                    kv = split ${trimmed} "="
+                    name = array_get ${kv} 0
+                    name = trim ${name}
+
+                    version = array_get ${kv} 1
+                    version_parts = split ${version} "\""
+                    version = array_get ${version_parts} 1
+
+                    result = exec cargo binstall -y ${name} --version ${version}
+                    output = set "${result.stdout}${result.stderr}"
+                    if not eq ${result.code} "0"
+                        echo "  building ${name} ${version} from source (no prebuilt binary)..."
+                        result = exec cargo install ${name} --version ${version}
+                        output = set "${result.stdout}${result.stderr}"
+                    end
+
+                    if not eq ${result.code} "0"
+                        echo "  FAILED       ${name} ${version}"
+                        echo ${output}
+                        exit 1
+                    end
+
+                    already = contains ${output} "already installed"
+                    if ${already}
+                        echo "  up-to-date   ${name} ${version}"
+                    else
+                        echo "  installed    ${name} ${version}"
+                    end
+                end
+            end
+        end
+    end
+end
+'''
+
+[tasks.individual-package-targets]
+script_runner = "@duckscript"
+script = '''
+args = get_env CARGO_MAKE_TASK_ARGS
+
+if is_empty ${args}
+  exit
+end
+
+1 = array ""
+2 = split ${args} ,
+3 = array_concat ${1} ${2}
+joined_args = array_join ${3} " -p "
+release ${1}
+release ${2}
+release ${3}
+
+joined_args = trim ${joined_args}
+set_env INDIVIDUAL_PACKAGE_TARGETS ${joined_args}
+release ${joined_args}
+'''
 
 [tasks.build]
-description = """Builds patina components. Example `cargo make build` or `cargo make -p release build`
+description = """Builds a single rust package with the standard library.
+
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
 
 Example:
     `cargo make build`
     `cargo make -p release build`
+    `cargo make -e FEATURES=feature1,feature2 build`
+"""
+alias = "build-std"
+
+[tasks.build-std]
+description = """Builds crates in the repository with the standard library, and their examples.
+
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build-std`
+    `cargo make -p release build-std`
+    `cargo make build-std <package_name>`
 """
 clear = true
-run_task = [{ name = ["build-x64", "build-aarch64"], parallel = true }]
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--examples"]
+dependencies = ["individual-package-targets", "build-lib"]
 
-[tasks.check_json]
-description = "Checks rust code for errors with results in JSON. Example `cargo make check_json`"
+[tasks.build-lib]
+description = """Builds crates in the repository with the standard library.
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build-lib`
+    `cargo make -p release build-lib`
+    `cargo make build-lib <package_name>`
+"""
 clear = true
 command = "cargo"
-args = ["check", "--message-format=json"]
+args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
+dependencies = ["individual-package-targets"]
 
-[tasks.check_no_std]
-description = "Checks rust code for no_std build errors with results."
+[tasks.check_code_x64]
+description = "Checks rust code for x64 build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
 
-[tasks.check_std]
-description = "Checks rust code for std build errors with results."
+[tasks.check_code_aarch64]
+description = "Checks rust code for aarch64 build errors with results."
 private = true
 command = "cargo"
-args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
 
 [tasks.check_tests]
 description = "Checks rust test code for build errors with results."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "@@split(CARGO_MAKE_TASK_ARGS, )"]
-
-[tasks.check]
-description = "Checks rust code for errors. Example `cargo make check`"
-clear = true
-run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
+args = ["test", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check-no-default-features-code]
 description = "Checks rust code compiles without default features."
@@ -97,6 +204,24 @@ description = "Checks rust code and tests compile without default features to ca
 clear = true
 run_task = [{ name = ["check-no-default-features-code", "check-no-default-features-tests"], parallel = true }]
 
+[tasks.check]
+description = "Checks rust code for errors. Example `cargo make check`"
+clear = true
+run_task = [{ name = ["check_code_x64", "check_code_aarch64", "check_tests"], parallel = true }]
+
+[tasks.patina-test]
+description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "test-runner"]
+dependencies = ["individual-package-targets"]
+
+[tasks.generate-lockfile]
+description = "Generate Cargo.lock file."
+private = true
+command = "cargo"
+args = ["generate-lockfile"]
+
 [tasks.llvm-cov-clean]
 description = "Clean coverage data"
 private = true
@@ -105,7 +230,7 @@ command = "cargo"
 args = ["llvm-cov", "clean", "--workspace"]
 
 [tasks.test]
-description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -- --nocapture`"
+description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`"
 clear = true
 command = "cargo"
 args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
@@ -116,26 +241,7 @@ install_crate = false
 clear = true
 command = "cargo"
 args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doctests"]
-dependencies = ["llvm-cov-clean"]
-
-[tasks.coverage-lcov]
-description = "Generate an LCOV coverage report from collected data."
-install_crate = false
-clear = true
-command = "cargo"
-args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
-
-[tasks.coverage-html]
-description = "Generate an HTML coverage report from collected data."
-install_crate = false
-clear = true
-command = "cargo"
-args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
-
-[tasks.coverage]
-description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
-dependencies = ["test-cov", "coverage-lcov", "coverage-html"]
-clear = true
+dependencies = ["individual-package-targets", "llvm-cov-clean"]
 
 [tasks.test-asan]
 description = "Run tests with AddressSanitizer enabled. Example `cargo make test-asan`. Use `cargo make test-asan --print-dll-path` to print the ASan runtime DLL directory."
@@ -186,26 +292,75 @@ end
 set_env RUSTFLAGS "-Zsanitizer=address"
 set_env RUSTDOCFLAGS "-Zsanitizer=address"
 target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
-exec --fail-on-error cargo test --target ${target} --workspace
+exec --fail-on-error cargo test --target ${target} --workspace --features std
 '''
 
-[tasks.clippy]
-description = "Run cargo clippy."
+[tasks.coverage-lcov]
+description = "Generate an LCOV coverage report from collected data."
+install_crate = false
 clear = true
 command = "cargo"
-args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+
+[tasks.coverage-html]
+description = "Generate an HTML coverage report from collected data."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
+
+[tasks.coverage]
+description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
+dependencies = ["test-cov", "coverage-lcov", "coverage-html"]
+clear = true
+
+[tasks.build-aarch64]
+description = "Builds crates in the repository for AARCH64"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "aarch64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
+dependencies = ["individual-package-targets"]
+
+[tasks.build-x64]
+description = "Builds crates in the repository for X64"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
+dependencies = ["individual-package-targets"]
 
 [tasks.doc]
-env = { RUSTDOCFLAGS = "-D warnings"}
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
 
 [tasks.doc-open]
-env = { RUSTDOCFLAGS = "-D warnings"}
-description = "Builds all rust documentation in the workspace and opens the documentation Example `cargo make doc-open`"
+description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
+clear = true
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
+
+[tasks.clippy]
+description = "Run cargo clippy for the host target and both UEFI cross-compilation targets."
+clear = true
+run_task = [{ name = ["clippy-x64", "clippy-aarch64", "clippy-std"], parallel = true }]
+
+[tasks.clippy-x64]
+description = "Run cargo clippy for x86_64-unknown-uefi."
+private = true
+command = "cargo"
+args = ["clippy", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+
+[tasks.clippy-aarch64]
+description = "Run cargo clippy for aarch64-unknown-uefi."
+private = true
+command = "cargo"
+args = ["clippy", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+
+[tasks.clippy-std]
+description = "Run cargo clippy for std."
+private = true
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 
 [tasks.fmt]
 description = "Run cargo format."
@@ -225,6 +380,67 @@ clear = true
 command = "cargo"
 args = ["test", "--doc"]
 
+[tasks.clean-mdbook-deps]
+description = """Removes the `target/mdbook/` directory to clean up old rlibs."""
+clear = true
+script_runner = "@duckscript"
+script = '''
+mdbook_target = set "target/mdbook"
+exists = is_path_exists ${mdbook_target}
+if ${exists}
+    echo Removing stale ${mdbook_target} directory...
+    rm -r ${mdbook_target}
+end
+'''
+
+[tasks.build-mdbook-deps]
+description = """Builds workspace libraries with the `mdbook` profile.
+This is a prerequisite for `cargo make test-mdbook`."""
+clear = true
+env = { RUSTC_PROFILE = "mdbook" }
+command = "cargo"
+args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
+dependencies = ["clean-mdbook-deps", "individual-package-targets"]
+
+[tasks.test-mdbook]
+description = """Builds the mdbook and runs all of its embedded doctests with
+`mdbook test`. Uses the workspace toolchain (from `rust-toolchain.toml`) so the
+doctests link against rlibs built by the same compiler, and points `mdbook test`
+to the mdbook profile `target/mdbook/deps/` directory produced by `build-mdbook-deps`.
+"""
+clear = true
+env = { RUSTC_BOOTSTRAP = "1" }
+script_runner = "@duckscript"
+script = '''
+toolchain_file = readfile rust-toolchain.toml
+channel = set "stable"
+found = set false
+lines = split ${toolchain_file} "\n"
+for line in ${lines}
+    trimmed = trim ${line}
+    starts = starts_with ${trimmed} "channel"
+    # Only use the first `channel` line (the one under `[toolchain]`).
+    if ${starts}
+        if not ${found}
+            parts = split ${trimmed} "\""
+            channel = array_get ${parts} 1
+            found = set true
+        end
+    end
+end
+exec --fail-on-error mdbook build docs
+exec --fail-on-error rustup run ${channel} mdbook test docs -L target/mdbook/deps
+'''
+dependencies = ["build-mdbook-deps"]
+
+[tasks.serve-mdbook]
+description = """Serves the mdbook at http://localhost:3000 with live reload.
+`mdbook serve` rebuilds on source changes. It does not run the embedded doctests
+(use `cargo make test-mdbook` for that)."""
+clear = true
+command = "mdbook"
+args = ["serve", "docs", "--open"]
+
 [tasks.cspell]
 description = "Run cspell for spell checking." # npm install -g cspell@latest
 script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
@@ -236,16 +452,35 @@ clear = true
 command = "cargo"
 args = ["deny", "check"]
 
+[tasks.bench]
+description = "Run cargo bench."
+clear = true
+command = "cargo"
+args = ["bench", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+
+[tasks.vet]
+description = "Run cargo vet."
+install_crate = false
+clear = true
+dependencies = ["generate-lockfile"]
+command = "cargo"
+args = ["vet", "--locked"]
+ignore_errors = false
+
 [tasks.all]
 description = "Run all tasks for PR readiness."
 dependencies = [
     "fmt-check",
     "deny",
-    "clippy",
     "cspell",
+    "clippy",
     "check-no-default-features",
     "build",
+    "build-x64",
+    "build-aarch64",
+    "patina-test",
     "coverage",
     "doc-test",
     "doc",
+    "test-mdbook",
 ]
