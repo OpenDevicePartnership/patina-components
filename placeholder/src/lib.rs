@@ -1,4 +1,8 @@
-// Placeholder crate to be deleted once components are added
+//! # Introduction
+//!
+//! This is a "placeholder" crate used for testing build commands and CI
+//! in the repo until an actual crate is replaces it.
+//!
 #![no_std]
 
 #[cfg(test)]
