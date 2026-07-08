@@ -15,6 +15,7 @@ ignorePaths:
   - "**/target/**"
   - "**/book/**"
   - "**/docs/mermaid.min.js"
+  - "supply-chain/**"
   - "deny.toml"
   - "Makefile.toml"
 # ignore hex numbers, asm blocks and patterns like xxxx'xxxxx used in describing bit patterns
