@@ -15,3 +15,10 @@ patina = { version = "21"}
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
+
+# Profile used to build workspace dependencies for `mdbook test`. Inherits from `dev`
+# but disables LTO so that the resulting rlibs contain machine code and can be linked
+# by `rustdoc --test` when running the doctests embedded in the mdbook.
+[profile.mdbook]
+inherits = "dev"
+lto = false

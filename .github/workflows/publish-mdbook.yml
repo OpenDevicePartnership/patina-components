@@ -1,0 +1,70 @@
+# @file publish-mdbook.yml
+#
+# A Github workflow that compiles an mdbook located at docs/* and publishes it
+# to the repository's githubpages page.
+#
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+
+name: Publish Documentation
+
+on:
+  # Trigger this workflow manually if necessary
+  workflow_dispatch:
+
+  # Triggers this workflow if a commit is pushed to main in which a file in
+  # docs/** has been updated
+  push:
+    branches:
+      - main
+    paths:
+      - docs/**
+
+jobs:
+  build:
+    name: Build Documentation
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v7
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@main
+      - name: 📄 Build Documentation 📄
+        run: mdbook build docs
+
+      - name: Upload Github Pages Site Artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          name: github-pages
+          path: docs/book/html
+
+  publish:
+    if: github.repository_owner == 'OpenDevicePartnership'
+    name: Publish Documentation
+
+    needs: [build]
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pages: write
+
+    steps:
+      - name: 🚀 Deploy Github Pages Site 🚀
+        uses: actions/deploy-pages@v5
+        with:
+          token: ${{ github.token }}
+          artifact_name: github-pages

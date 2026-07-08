@@ -13,6 +13,8 @@ dictionaries:
   - "rust"
 ignorePaths:
   - "**/target/**"
+  - "**/book/**"
+  - "**/docs/mermaid.min.js"
   - "deny.toml"
   - "Makefile.toml"
 # ignore hex numbers, asm blocks and patterns like xxxx'xxxxx used in describing bit patterns
@@ -29,5 +31,6 @@ words:
   - "efiapi"
   - "guids"
   - "mdbook"
+  - "rlibs"
   - "sysreg"
   - "unsignaled"
