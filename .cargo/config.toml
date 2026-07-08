@@ -6,6 +6,15 @@
 
 [env]
 PATINA_CONFIG_VERSION = "1"
+RUSTC_BOOTSTRAP = "1"
+
+# Restrict the unstable features RUSTC_BOOTSTRAP makes available to only those Patina has accepted
+# through the unstable feature process. This applies to host builds (tests, proc-macros).
+# The UEFI targets below repeat the flag because Cargo does not merge rustflags sources.
+[build]
+rustflags = [
+    "-Z", "allow-features=c_variadic,allocator_api,coverage_attribute",
+]
 
 [profile.dev]
 # optimize for size
@@ -61,6 +70,8 @@ rustflags = [
     "-C", "force-frame-pointers",
     # Preserve stack unwind info
     "-C", "force-unwind-tables",
+    # Restrict the unstable features RUSTC_BOOTSTRAP unlocks to the accepted set
+    "-Z", "allow-features=c_variadic,allocator_api,coverage_attribute",
 ]
 
 [target.aarch64-unknown-uefi]
@@ -71,4 +82,6 @@ rustflags = [
     "-C", "force-frame-pointers",
     # Preserve stack unwind info
     "-C", "force-unwind-tables",
+    # Restrict the unstable features RUSTC_BOOTSTRAP unlocks to the accepted set
+    "-Z", "allow-features=c_variadic,allocator_api,coverage_attribute",
 ]
