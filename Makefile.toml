@@ -235,10 +235,21 @@ clear = true
 command = "cargo"
 args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
+[tasks.test-ignored]
+description = "Runs ignored tests with native cargo test behavior. Example `cargo make test-ignored` or `cargo make test-ignored -p package_name"
+clear = true
+command = "cargo"
+args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--lib", "--tests", "--examples", "--", "--ignored"]
+
 [tasks.test-cov]
 description = "Run tests and collect coverage data without generating reports."
 install_crate = false
 clear = true
+# `coverage_attribute` is deliberately excluded from the default allow-features in
+# .cargo/config.toml so ungated `#[coverage(off)]` fails to compile. Coverage runs set the
+# `coverage` cfg (set by cargo-llvm-cov), which needs the feature, so re-add it here.
+# Note: RUSTFLAGS replaces build.rustflags.
+env = { RUSTFLAGS = "-Z allow-features=c_variadic,allocator_api,coverage_attribute" }
 command = "cargo"
 args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doctests"]
 dependencies = ["individual-package-targets", "llvm-cov-clean"]
@@ -331,13 +342,13 @@ dependencies = ["individual-package-targets"]
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--no-deps"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
 clear = true
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--open"]
 
 [tasks.clippy]
 description = "Run cargo clippy for the host target and both UEFI cross-compilation targets."
@@ -482,5 +493,6 @@ dependencies = [
     "coverage",
     "doc-test",
     "doc",
+    "test-ignored",
     "test-mdbook",
 ]
