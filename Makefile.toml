@@ -13,7 +13,10 @@ STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 # Note: `--profile test` has been set here in the past. Cargo already defaults to test builds
 # with the test profile, so it is removed. cargo-llvm-cov will forward it to `cargo nextest run`
 # where `--profile` is used to incorrectly select a nextest config profile (not a Cargo build profile).
-COV_FLAGS = { value = "--workspace --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+# `--workspace` is intentionally not part of this value. It is supplied separately by the
+# `cov-workspace-flag` task, which omits it when the command line provides arguments, because
+# `--workspace` overrides `-p`.
+COV_FLAGS = { value = "--ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 # Selects the nextest `ci` profile (defined in .config/nextest.toml) automatically when the `CI`
 # variable is set (e.g. GitHub Actions sets this for every job).
@@ -108,30 +111,11 @@ for line in ${lines}
 end
 '''
 
-[tasks.individual-package-targets]
-script_runner = "@duckscript"
-script = '''
-args = get_env CARGO_MAKE_TASK_ARGS
-
-if is_empty ${args}
-  exit
-end
-
-1 = array ""
-2 = split ${args} ,
-3 = array_concat ${1} ${2}
-joined_args = array_join ${3} " -p "
-release ${1}
-release ${2}
-release ${3}
-
-joined_args = trim ${joined_args}
-set_env INDIVIDUAL_PACKAGE_TARGETS ${joined_args}
-release ${joined_args}
-'''
-
 [tasks.build]
 description = """Builds a single rust package with the standard library.
+
+Arguments are forwarded to `cargo build` unchanged, so any flag `cargo build`
+accepts can be used.
 
 Customizations:
     -p [development|release]: Builds in debug or release. Default: development
@@ -140,12 +124,16 @@ Customizations:
 Example:
     `cargo make build`
     `cargo make -p release build`
+    `cargo make build -p patina`
     `cargo make -e FEATURES=feature1,feature2 build`
 """
 alias = "build-std"
 
 [tasks.build-std]
 description = """Builds crates in the repository with the standard library, and their examples.
+
+Arguments are forwarded to `cargo build` unchanged, so any flag `cargo build`
+accepts can be used.
 
 Customizations:
     -p [development|release]: Builds in debug or release. Default: development
@@ -154,15 +142,19 @@ Customizations:
 Example:
     `cargo make build-std`
     `cargo make -p release build-std`
-    `cargo make build-std <package_name>`
+    `cargo make build-std -p patina -p patina_dxe_core`
 """
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--examples"]
-dependencies = ["individual-package-targets", "build-lib"]
+args = ["build", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(STD_FLAGS, )", "--examples"]
+dependencies = ["build-lib"]
 
 [tasks.build-lib]
 description = """Builds crates in the repository with the standard library.
+
+Arguments are forwarded to `cargo build` unchanged, so any flag `cargo build`
+accepts can be used.
+
 Customizations:
     -p [development|release]: Builds in debug or release. Default: development
     -e FEATURES=[feature,...]: Builds with the specified features. Default: none
@@ -170,42 +162,41 @@ Customizations:
 Example:
     `cargo make build-lib`
     `cargo make -p release build-lib`
-    `cargo make build-lib <package_name>`
+    `cargo make build-lib -p patina`
 """
 clear = true
 command = "cargo"
-args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
-dependencies = ["individual-package-targets"]
+args = ["build", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(STD_FLAGS, )"]
 
 [tasks.check_code_x64]
 description = "Checks rust code for x64 build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
+args = ["check", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(NO_STD_FLAGS, )",]
 
 [tasks.check_code_aarch64]
 description = "Checks rust code for aarch64 build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
+args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(NO_STD_FLAGS, )",]
 
 [tasks.check_tests]
 description = "Checks rust test code for build errors with results."
 private = true
 command = "cargo"
-args = ["nextest", "run", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.check-no-default-features-code]
 description = "Checks rust code compiles without default features."
 private = true
 command = "cargo"
-args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.check-no-default-features-tests]
 description = "Checks rust test code compiles without default features."
 private = true
 command = "cargo"
-args = ["nextest", "run", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.check-no-default-features]
 description = "Checks rust code and tests compile without default features to catch feature-gate regressions."
@@ -213,16 +204,20 @@ clear = true
 run_task = [{ name = ["check-no-default-features-code", "check-no-default-features-tests"], parallel = true }]
 
 [tasks.check]
-description = "Checks rust code for errors. Example `cargo make check`"
+description = "Checks rust code for errors. Arguments are forwarded to `cargo check`/`cargo nextest`. Example `cargo make check` or `cargo make check -p patina`"
 clear = true
 run_task = [{ name = ["check_code_x64", "check_code_aarch64", "check_tests"], parallel = true }]
 
 [tasks.patina-test]
-description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
+# The feature is selected as `patina_test/test-runner` rather than a bare `test-runner`. A bare
+# feature name must be declared by every selected package, so `-p <crate>` failed for every crate
+# except `patina_test` itself. The `<package>/<feature>` form only requires `patina_test` to be in
+# the dependency graph of the selected packages, which is already true for any crate that writes
+# `#[patina_test]` tests.
+description = "Builds crates with Patina tests enabled. Arguments are forwarded to `cargo build`. Example `cargo make patina-test` or `cargo make patina-test -p patina_dxe_core`"
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "test-runner"]
-dependencies = ["individual-package-targets"]
+args = ["build", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(STD_FLAGS, )", "--features", "patina_test/test-runner"]
 
 [tasks.generate-lockfile]
 description = "Generate Cargo.lock file."
@@ -238,19 +233,46 @@ command = "cargo"
 args = ["llvm-cov", "clean", "--workspace"]
 
 [tasks.test]
-description = "Runs tests via cargo-nextest. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`."
+description = "Runs tests via cargo-nextest. Arguments are forwarded to `cargo nextest run`. Example `cargo make test` or `cargo make test -p patina --no-capture`. In CI, also runs a second pass with the `ci_features` feature enabled to ensure tests do not depend on it being enabled."
 clear = true
+dependencies = ["test-default", "test-ci-features"]
+
+[tasks.test-default]
+description = "Runs tests via cargo-nextest with default features."
+private = true
 command = "cargo"
 args = ["nextest", "run", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
+[tasks.test-ci-features]
+description = "Runs tests via cargo-nextest with the `ci_features` feature enabled. Only runs when the `CI` environment variable is set."
+private = true
+condition = { env_set = ["CI"] }
+command = "cargo"
+args = ["nextest", "run", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+
 [tasks.test-ignored]
-description = "Runs ignored tests with native cargo test behavior. Example `cargo make test-ignored` or `cargo make test-ignored -p package_name"
+description = "Runs ignored tests with native cargo test behavior. Arguments are forwarded to `cargo test`. Example `cargo make test-ignored` or `cargo make test-ignored -p patina`"
 clear = true
 command = "cargo"
-args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--lib", "--tests", "--examples", "--", "--ignored"]
+args = ["test", "--lib", "--tests", "--examples", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--", "--ignored"]
+
+[tasks.cov-workspace-flag]
+description = """Sets `COV_WORKSPACE` to `--workspace` only when no arguments were given on the
+command line. `--workspace` overrides `-p`, so it is dropped whenever any argument is given
+(for example `cargo make coverage -p patina`)."""
+private = true
+script_runner = "@duckscript"
+script = '''
+args = get_env CARGO_MAKE_TASK_ARGS
+if is_empty ${args}
+    set_env COV_WORKSPACE "--workspace"
+else
+    set_env COV_WORKSPACE ""
+end
+'''
 
 [tasks.test-cov]
-description = "Run tests and collect coverage data without generating reports."
+description = "Run tests and collect coverage data without generating reports. Arguments are forwarded to `cargo llvm-cov nextest`."
 install_crate = false
 clear = true
 # `coverage_attribute` is deliberately excluded from the default allow-features in
@@ -258,9 +280,34 @@ clear = true
 # `coverage` cfg (set by cargo-llvm-cov), which needs the feature, so re-add it here.
 # Note: RUSTFLAGS replaces build.rustflags.
 env = { RUSTFLAGS = "-Z allow-features=c_variadic,allocator_api,coverage_attribute" }
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping test-cov."
+    exit 1
+end
+''']
 command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "nextest"]
-dependencies = ["individual-package-targets", "llvm-cov-clean"]
+args = ["llvm-cov", "@@split(COV_WORKSPACE, )", "@@split(COV_FLAGS, )", "--no-report", "nextest", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+dependencies = ["cov-workspace-flag", "llvm-cov-clean"]
+
+[tasks.test-cov-fallback]
+description = "Runs tests without coverage instrumentation on hosts where test-cov is skipped (currently just aarch64-pc-windows-msvc). Arguments are forwarded to `cargo nextest run`."
+clear = true
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if not eq ${target} "aarch64-pc-windows-msvc"
+    exit 1
+end
+''']
+command = "cargo"
+args = ["nextest", "run", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.test-asan]
 description = "Run tests with AddressSanitizer enabled. Example `cargo make test-asan`. Use `cargo make test-asan --print-dll-path` to print the ASan runtime DLL directory."
@@ -320,6 +367,18 @@ exec --fail-on-error cargo test --doc --target ${target} --workspace --features 
 description = "Generate an LCOV coverage report from collected data."
 install_crate = false
 clear = true
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping coverage-lcov."
+    exit 1
+end
+''']
 command = "cargo"
 args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
 
@@ -327,41 +386,105 @@ args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE
 description = "Generate an HTML coverage report from collected data."
 install_crate = false
 clear = true
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping coverage-html."
+    exit 1
+end
+''']
 command = "cargo"
 args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
 
 [tasks.coverage]
-description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
-dependencies = ["test-cov", "coverage-lcov", "coverage-html"]
+description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports). Arguments are forwarded to `cargo llvm-cov nextest`. Example `cargo make coverage -p patina`. In CI, also runs a second pass with the `ci_features` feature enabled (outside of coverage collection) since only `cargo make coverage` is run in CI."
+dependencies = ["test-cov", "test-cov-fallback", "coverage-lcov", "coverage-html", "test-ci-features"]
 clear = true
 
 [tasks.build-aarch64]
-description = "Builds crates in the repository for AARCH64"
+description = "Builds crates in the repository for AARCH64. Arguments are forwarded to `cargo build`. Example `cargo make build-aarch64 -p patina_dxe_core`"
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "aarch64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
-dependencies = ["individual-package-targets"]
+args = ["build", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--target", "aarch64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
 
 [tasks.build-x64]
-description = "Builds crates in the repository for X64"
+description = "Builds crates in the repository for X64. Arguments are forwarded to `cargo build`. Example `cargo make build-x64 -p patina_dxe_core`"
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
-dependencies = ["individual-package-targets"]
+args = ["build", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "Cross-compiling for x86_64-unknown-uefi from aarch64-pc-windows-msvc is skipped to save build time on Windows ARM64 hosts."
+    exit 1
+end
+''']
+
+[tasks.check-no-alloc-x64]
+description = """Checks each package with `package.metadata.patina.no_alloc = true` in its Cargo.toml for
+x64 target with only `core` available, so any `alloc` use in it or its dependencies fails.
+
+Example:
+    `cargo make check-no-alloc-x64`
+"""
+clear = true
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "Cross-compiling for x86_64-unknown-uefi from aarch64-pc-windows-msvc is skipped to save build time on Windows ARM64 hosts."
+    exit 1
+end
+''']
+script = '''
+out = exec --fail-on-error cargo metadata --no-deps --format-version 1
+metadata = json_parse ${out.stdout}
+saved_rustflags = get_env RUSTFLAGS
+# The config rustflags minus `-Z allow-features`, which breaks `-Zbuild-std`.
+set_env RUSTFLAGS "-C link-arg=/subsystem:efi_boot_service_driver -C force-frame-pointers -C force-unwind-tables"
+set_env RUSTC_BOOTSTRAP 1
+
+# One check per package so their dependency features are not unified.
+indexes = range 0 ${metadata.packages.length}
+for i in ${indexes}
+    no_alloc = get_by_name metadata.packages[${i}].metadata.patina.no_alloc
+    if eq "${no_alloc}" true
+        name = get_by_name metadata.packages[${i}].name
+        exec --fail-on-error cargo check -p ${name} --target x86_64-unknown-uefi -Zbuild-std=core
+    end
+end
+
+# Restore the environment for later tasks in the same run.
+unset_env RUSTC_BOOTSTRAP
+if is_empty ${saved_rustflags}
+    unset_env RUSTFLAGS
+else
+    set_env RUSTFLAGS ${saved_rustflags}
+end
+'''
 
 [tasks.doc]
-description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
-command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--no-deps"]
-
-[tasks.doc-open]
-description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
+description = "Builds all rust documentation in the workspace. Arguments are forwarded to `cargo doc`. Example `cargo make doc` or `cargo make doc -p patina`"
 clear = true
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--open"]
+# `alloc` is not a default feature of `patina`. Enable it so the docs match docs.rs.
+args = ["doc", "--features", "patina/alloc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--no-deps"]
+
+[tasks.doc-open]
+description = "Builds all rust documentation in the workspace and opens the documentation. Arguments are forwarded to `cargo doc`. Example `cargo make doc-open` or `cargo make doc-open -p patina`"
+clear = true
+command = "cargo"
+# `alloc` is not a default feature of `patina`. Enable it so the docs match docs.rs.
+args = ["doc", "--features", "patina/alloc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--open"]
 
 [tasks.clippy]
-description = "Run cargo clippy for the host target and both UEFI cross-compilation targets."
+description = "Run cargo clippy for the host target and both UEFI cross-compilation targets. Arguments are forwarded to `cargo clippy`."
 clear = true
 run_task = [{ name = ["clippy-x64", "clippy-aarch64", "clippy-std"], parallel = true }]
 
@@ -369,37 +492,54 @@ run_task = [{ name = ["clippy-x64", "clippy-aarch64", "clippy-std"], parallel = 
 description = "Run cargo clippy for x86_64-unknown-uefi."
 private = true
 command = "cargo"
-args = ["clippy", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+args = ["clippy", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
 
 [tasks.clippy-aarch64]
 description = "Run cargo clippy for aarch64-unknown-uefi."
 private = true
 command = "cargo"
-args = ["clippy", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+args = ["clippy", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
 
 [tasks.clippy-std]
 description = "Run cargo clippy for std."
 private = true
 command = "cargo"
-args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+args = ["clippy", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--", "-D", "warnings"]
+
+[tasks.fmt-all-flag]
+description = """Sets `FMT_ALL` to `--all` only when no arguments were given on the command line.
+`--all` overrides `-p`, so it is dropped whenever any argument is given (for example
+`cargo make fmt -p patina`)."""
+private = true
+script_runner = "@duckscript"
+script = '''
+args = get_env CARGO_MAKE_TASK_ARGS
+if is_empty ${args}
+    set_env FMT_ALL "--all"
+else
+    set_env FMT_ALL ""
+end
+'''
 
 [tasks.fmt]
-description = "Run cargo format."
+description = "Run cargo format. Arguments are forwarded to `cargo fmt`. Example `cargo make fmt` or `cargo make fmt -p patina`"
 clear = true
 command = "cargo"
-args = ["fmt", "--all"]
+args = ["fmt", "@@split(FMT_ALL, )", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+dependencies = ["fmt-all-flag"]
 
 [tasks.fmt-check]
-description = "Check cargo format without modifying files."
+description = "Check cargo format without modifying files. Arguments are forwarded to `cargo fmt`. Example `cargo make fmt-check` or `cargo make fmt-check -p patina`"
 clear = true
 command = "cargo"
-args = ["fmt", "--all", "--check"]
+args = ["fmt", "@@split(FMT_ALL, )", "--check", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+dependencies = ["fmt-all-flag"]
 
 [tasks.doc-test]
-description = "Run documentation tests."
+description = "Run documentation tests. Arguments are forwarded to `cargo test`."
 clear = true
 command = "cargo"
-args = ["test", "--doc"]
+args = ["test", "--doc", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.clean-mdbook-deps]
 description = """Removes the `target/mdbook/` directory to clean up old rlibs."""
@@ -420,8 +560,8 @@ This is a prerequisite for `cargo make test-mdbook`."""
 clear = true
 env = { RUSTC_PROFILE = "mdbook" }
 command = "cargo"
-args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
-dependencies = ["clean-mdbook-deps", "individual-package-targets"]
+args = ["build", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS,;)", "@@split(STD_FLAGS, )"]
+dependencies = ["clean-mdbook-deps"]
 
 [tasks.test-mdbook]
 description = """Builds the mdbook and runs all of its embedded doctests with
@@ -467,25 +607,25 @@ description = "Run cspell for spell checking." # npm install -g cspell@latest
 script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
 
 [tasks.deny]
-description = "Run cargo deny."
+description = "Run cargo deny. Arguments are forwarded to `cargo deny check`."
 install_crate = false
 clear = true
 command = "cargo"
-args = ["deny", "check"]
+args = ["deny", "check", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.bench]
-description = "Run cargo bench."
+description = "Run cargo bench. Arguments are forwarded to `cargo bench`."
 clear = true
 command = "cargo"
 args = ["bench", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.vet]
-description = "Run cargo vet."
+description = "Run cargo vet. Arguments are forwarded to `cargo vet`."
 install_crate = false
 clear = true
 dependencies = ["generate-lockfile"]
 command = "cargo"
-args = ["vet", "--locked"]
+args = ["vet", "--locked", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 ignore_errors = false
 
 [tasks.all-preflight]
@@ -493,12 +633,13 @@ private = true
 run_task = [{ name = ["fmt-check", "deny", "cspell"], parallel = true }]
 
 [tasks.all]
-description = "Run all tasks for PR readiness."
+description = "Run all tasks for PR readiness. This task takes no arguments; any arguments given are forwarded to every sub-task."
 env = { CARGO_INCREMENTAL = "0" }
 run_task = { name = [
         "all-preflight",
         "clippy",
         "check-no-default-features",
+        "check-no-alloc-x64",
         "build",
         "build-x64",
         "build-aarch64",
