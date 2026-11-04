@@ -1,0 +1,99 @@
+//! Per-device state for USB HID devices.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+use alloc::vec::Vec;
+use core::ffi::c_void;
+
+use r_efi::efi::protocols::usb_io;
+
+use patina::{
+    component::service::{
+        Service,
+        uefi_services::{event::Event, timer_event::TimerEventServices},
+    },
+    vendor_protocols::hid_io::{HidIoProtocol, HidIoReportCallback},
+};
+
+/// USB HID descriptor set read from the device during initialization.
+#[derive(Debug)]
+pub struct UsbHidDescriptors {
+    pub interface_descriptor: usb_io::InterfaceDescriptor,
+    pub int_in_endpoint_descriptor: usb_io::EndpointDescriptor,
+    pub report_descriptor: Vec<u8>,
+}
+
+/// Registered callback state for asynchronous input report notifications.
+#[derive(Default)]
+pub struct ReportCallbackState {
+    pub callback: Option<HidIoReportCallback>,
+    pub context: *mut c_void,
+}
+
+/// Per-device context for a USB HID device managed by this driver.
+///
+/// Allocated on the heap during driver binding `start` and freed during
+/// driver binding `stop`. The `hid_io` field is installed as a protocol
+/// interface on the controller handle.
+#[repr(C)]
+pub struct UsbHidDevice {
+    // Note: a direct cast is used to recover the UsbHidDevice pointer from the HidIoProtocol pointer, so hid_io must be
+    // the first field.
+    pub hid_io: HidIoProtocol,
+    pub usb_io: *mut usb_io::Protocol,
+    pub descriptors: UsbHidDescriptors,
+    pub report_callback: ReportCallbackState,
+    /// Timer event services used to arm the delayed error recovery timer.
+    pub(crate) timer_services: Service<dyn TimerEventServices>,
+    /// Timer event armed by the interrupt callback on transfer errors. The event's
+    /// notify function re-submits the async interrupt transfer after a delay.
+    pub(crate) recovery_event: Option<Event>,
+}
+
+impl UsbHidDevice {
+    /// Recovers a raw pointer to the `UsbHidDevice` from a pointer to its `hid_io` field.
+    ///
+    /// This is a pure pointer cast (no dereference) and is therefore safe. The
+    /// caller is responsible for ensuring the returned pointer is valid before
+    /// dereferencing it — `hid_io_ptr` must point to the `hid_io` field of a
+    /// heap-allocated `UsbHidDevice`, and the `hid_io` field must be the first
+    /// field in the `#[repr(C)]` layout.
+    pub fn from_hid_io_protocol(hid_io_ptr: *const HidIoProtocol) -> *mut Self {
+        hid_io_ptr as *mut UsbHidDevice
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::hid_io_impl;
+    use alloc::boxed::Box;
+    use patina::component::service::uefi_services::timer_event::MockTimerEventServices;
+
+    #[test]
+    fn from_hid_io_protocol_recovers_device() {
+        let device = Box::new(UsbHidDevice {
+            hid_io: hid_io_impl::new_hid_io_protocol(),
+            usb_io: core::ptr::null_mut(),
+            descriptors: UsbHidDescriptors {
+                interface_descriptor: crate::usb_hid_defs::empty_usb_interface_descriptor(),
+                int_in_endpoint_descriptor: crate::usb_hid_defs::empty_usb_endpoint_descriptor(),
+                report_descriptor: Vec::new(),
+            },
+            report_callback: ReportCallbackState::default(),
+            timer_services: Service::mock(Box::new(MockTimerEventServices::new())),
+            recovery_event: None,
+        });
+
+        let hid_io_ptr = &device.hid_io as *const HidIoProtocol;
+        let recovered = UsbHidDevice::from_hid_io_protocol(hid_io_ptr);
+        assert_eq!(recovered as usize, &*device as *const _ as usize);
+
+        // Prevent drop from double-freeing the leaked box.
+        core::mem::forget(device);
+    }
+}
