@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["placeholder"]
+members = ["uefi_hid", "usb_hid"]
 
 [workspace.package]
 version = "0.0.1"
@@ -11,10 +11,19 @@ description = "Patina components"
 repository = "https://github.com/OpenDevicePartnership/patina-components"
 
 [workspace.dependencies]
-patina = { version = "21"}
+hidparser = { version = "1" }
+log = { version = "0.4", default-features = false }
+mockall = { version = "0.13.0" }
+num_enum = { version = "0.7", default-features = false }
+patina = { version = "24.2.0" }
+r-efi = { version = "7", default-features = false }
+scroll = { version = "0.13", default-features = false, features = ["derive"] }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 # Profile used to build workspace dependencies for `mdbook test`. Inherits from `dev`
 # but disables LTO so that the resulting rlibs contain machine code and can be linked
