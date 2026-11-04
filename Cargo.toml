@@ -22,6 +22,9 @@ scroll = { version = "0.13", default-features = false, features = ["derive"] }
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+
 # Profile used to build workspace dependencies for `mdbook test`. Inherits from `dev`
 # but disables LTO so that the resulting rlibs contain machine code and can be linked
 # by `rustdoc --test` when running the doctests embedded in the mdbook.

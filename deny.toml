@@ -91,6 +91,7 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
+    { allow = ["Unicode-3.0"], crate = "unicode-ident" }
 ]
 
 [licenses.private]
